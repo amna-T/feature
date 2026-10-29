@@ -236,11 +236,27 @@ async function processRefundLocked(
       capturedFils: prepared.capturedFils,
       refundedTotalFils: newRefundedTotal,
     });
-    const feeReversedFils = calculateRefundFee(
-      prepared.capturedFils,
-      prepared.feeChargedFils,
-      prepared.requestedAmount,
+    // Each partial reversal is rounded on its own, so on their own they can
+    // fall short of the fee charged (250 fils refunded as 3333+3333+3334 of
+    // 10000 reverses 83+83+83 = 249). Cap every reversal at the fee not yet
+    // reversed, and when this refund returns everything captured, reverse
+    // exactly that remainder so the reversals sum to the fee to the fil.
+    const reversedResult = await client.query<{ reversed: string }>(
+      `SELECT COALESCE(SUM(fee_reversed_fils), 0)::text AS reversed
+         FROM refunds
+        WHERE transaction_id = $1 AND status = 'succeeded'`,
+      [prepared.transactionId],
     );
+    const feeNotYetReversed = subtractFils(
+      prepared.feeChargedFils,
+      toFils(Number(reversedResult.rows[0]?.reversed ?? 0)),
+    );
+    const remainingFee = compareFils(feeNotYetReversed, ZERO_FILS) > 0 ? feeNotYetReversed : ZERO_FILS;
+    const proRata = calculateRefundFee(prepared.capturedFils, prepared.feeChargedFils, prepared.requestedAmount);
+    const feeReversedFils =
+      compareFils(newRefundedTotal, prepared.capturedFils) >= 0 || compareFils(proRata, remainingFee) > 0
+        ? remainingFee
+        : proRata;
 
     const refundResult = await client.query<{ id: string; occurred_at: Date }>(
       `INSERT INTO refunds
@@ -254,7 +270,9 @@ async function processRefundLocked(
         prepared.requestedAmount,
         feeReversedFils,
         acquirerResult.acquirerReference,
-        input.reason ?? null,
+        // refunds.reason is NOT NULL (0070) but optional in the API; a missing
+        // one was a 500 on every refund that left it out.
+        input.reason ?? "unspecified",
         input.actor.type,
         input.actor.id,
       ],
