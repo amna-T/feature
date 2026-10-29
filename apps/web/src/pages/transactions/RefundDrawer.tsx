@@ -4,15 +4,15 @@
 // and it makes a new idempotency key per click. check before uncommenting
 // max refund = captured is right, partial refunds are tracked server side — am
 /**
- * Parked, not wired. The drawer is finished, but `POST /v1/refunds` still
- * answers 501, so shipping the control would only put a dead button on every
- * transaction page. Restore this file and add its route in the same change —
- * it is deliberately imported nowhere in the meantime so the bundle does not
- * carry it.
+ * Parked, not wired. Updated for FP-212 to call `POST /v1/refunds` with the
+ * transaction in the body; the merchant comes from the session server-side.
+ * The route is behind FEATURE_REFUNDS and answers 501 while it is off, so
+ * this stays imported nowhere until the flag is turned on. Uncomment and
+ * render it from TransactionDetailPage in the same change that enables it.
  */
 
 /*
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { request } from "../../api/client.js";
 import { describeError } from "../../api/client.js";
 import { useDashboardAuth } from "../../auth/DashboardAuthContext.js";
@@ -36,19 +36,29 @@ interface RefundDrawerProps {
   onRefunded: () => Promise<void>;
 }
 
+const REFUNDABLE_STATUSES = new Set(["captured", "partially_captured", "partially_refunded"]);
+
 export function RefundDrawer({ txn, onRefunded }: RefundDrawerProps) {
   const { me } = useDashboardAuth();
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // One key per refund attempt, not per click: resubmitting the same request
+  // (a network retry, an acquirer timeout) reuses it, so the server replays
+  // the first result instead of refunding twice. Opening the form or changing
+  // the amount starts a new attempt.
+  const idempotencyKey = useRef<string>(crypto.randomUUID());
 
-  const merchantId = me?.merchant.id;
-  const refundable = txn.status === "captured" || txn.status === "partially_captured";
+  const refundable = REFUNDABLE_STATUSES.has(txn.status);
+
+  function startNewAttempt(): void {
+    idempotencyKey.current = crypto.randomUUID();
+  }
 
   async function handleRefund(event: React.FormEvent): Promise<void> {
     event.preventDefault();
-    if (!merchantId) return;
+    if (!me) return;
     if (!window.confirm("Refund this transaction? The money goes back to the cardholder and cannot be recalled.")) {
       return;
     }
@@ -62,16 +72,15 @@ export function RefundDrawer({ txn, onRefunded }: RefundDrawerProps) {
       // affordance the capture form has.
       const body = trimmed === "" ? { transactionId: txn.id } : { transactionId: txn.id, amountFils: Number(trimmed) };
 
-      await request<RefundResponse>(`/v1/merchants/${encodeURIComponent(merchantId)}/refunds`, {
+      await request<RefundResponse>("/v1/refunds", {
         method: "POST",
-        // A fresh key per click, including a retry after a decline — same
-        // discipline as capture and the checkout page's submit handler.
-        headers: { "Idempotency-Key": crypto.randomUUID() },
+        headers: { "Idempotency-Key": idempotencyKey.current },
         body: JSON.stringify(body),
       });
 
       setOpen(false);
       setAmount("");
+      startNewAttempt();
       // Refetch rather than patch: the refund wrote a new transaction_events
       // row server-side, so the timeline is stale, not merely shorter.
       await onRefunded();
@@ -98,7 +107,10 @@ export function RefundDrawer({ txn, onRefunded }: RefundDrawerProps) {
                 step={1}
                 max={txn.capturedFils}
                 value={amount}
-                onChange={(e) => setAmount(e.target.value)}
+                onChange={(e) => {
+                  setAmount(e.target.value);
+                  startNewAttempt();
+                }}
               />
             </label>
             <p className="dash-muted">Captured so far: {bhd(txn.capturedFils)}</p>
@@ -110,7 +122,14 @@ export function RefundDrawer({ txn, onRefunded }: RefundDrawerProps) {
             </button>
           </form>
         ) : (
-          <button type="button" className="dash-button" onClick={() => setOpen(true)}>
+          <button
+            type="button"
+            className="dash-button"
+            onClick={() => {
+              startNewAttempt();
+              setOpen(true);
+            }}
+          >
             Refund
           </button>
         )}

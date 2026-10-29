@@ -118,6 +118,9 @@ export interface Config {
   acquirerCallbackSigningSecret: string;
   /** Set true once the sandbox signs everything. */
   acquirerCallbackRequireSignature: boolean;
+
+  /** FEATURE_REFUNDS (FP-212). Off: POST /v1/refunds keeps answering 501. */
+  featureRefunds: boolean;
 }
 
 function parseNodeEnv(value: string | undefined): Config["nodeEnv"] {
@@ -257,5 +260,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
     acquirerCallbackSigningSecret,
     acquirerCallbackRequireSignature: parseBoolEnv(env.ACQUIRER_CALLBACK_REQUIRE_SIGNATURE, true),
+
+    featureRefunds: parseBoolEnv(env.FEATURE_REFUNDS, false),
   };
 }
