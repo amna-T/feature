@@ -103,3 +103,26 @@ export function formatCardBrandHint(pan: string): "visa" | "mastercard" | "amex"
   if (/^3[47]/.test(digits)) return "amex";
   return "unknown";
 }
+
+/** The card number as typed, regrouped in fours (`"4242 4242 4242 4242"`),
+ *  at most 19 digits. The API strips the spaces again before validating. */
+export function groupCardNumber(raw: string): string {
+  const digits = raw.replace(/\D/g, "").slice(0, 19);
+  return digits.replace(/(\d{4})(?=\d)/g, "$1 ");
+}
+
+const BAHRAIN_OFFSET_MS = 3 * 3_600_000;
+
+/** Time left until the next Asia/Bahrain midnight (UTC+3, no DST), when the
+ *  business day closes and settlement runs (ADR-0003). */
+export function untilBahrainMidnight(now: Date): { hours: number; minutes: number } {
+  const local = now.getTime() + BAHRAIN_OFFSET_MS;
+  const msLeft = 86_400_000 - (((local % 86_400_000) + 86_400_000) % 86_400_000);
+  const totalMinutes = Math.ceil(msLeft / 60_000);
+  return { hours: Math.floor(totalMinutes / 60), minutes: totalMinutes % 60 };
+}
+
+/** Today's Asia/Bahrain business date as `YYYY-MM-DD`. */
+export function bahrainBusinessDate(now: Date): string {
+  return new Date(now.getTime() + BAHRAIN_OFFSET_MS).toISOString().slice(0, 10);
+}

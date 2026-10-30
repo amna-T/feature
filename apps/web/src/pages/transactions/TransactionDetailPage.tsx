@@ -150,7 +150,7 @@ export function TransactionDetailPage() {
       <dl className="dash-dl">
         <dt>Status</dt>
         <dd>
-          <span className={`dash-status dash-status-${txn.status}`}>{txn.status}</span>
+          <span className={`dash-status dash-status-${txn.status}`}>{txn.status.replace(/_/g, " ")}</span>
         </dd>
         <dt>Authorized amount</dt>
         <dd>{bhd(txn.amountFils)}</dd>

@@ -111,7 +111,7 @@ export function PaymentLinkListPage() {
               <td>{dash(link.description)}</td>
               <td>{bhd(link.amountFils)}</td>
               <td>
-                <span className={`dash-status dash-status-${link.status}`}>{link.status}</span>
+                <span className={`dash-status dash-status-${link.status}`}>{link.status.replace(/_/g, " ")}</span>
               </td>
               <td>{dateTime(link.expiresAt)}</td>
               <td>{dateTime(link.paidAt)}</td>
