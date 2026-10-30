@@ -166,6 +166,9 @@ services:
       dockerfile: ops/Dockerfile.go
     command: ["./settlement", "daemon"]
     restart: unless-stopped
+    # On a redeploy, SIGTERM lets an in-flight batch transaction commit or roll
+    # back; Docker's default 10 s could cut a long batch close short.
+    stop_grace_period: 120s
     env_file: .env.docker
     environment:
       SETTLEMENT_INTERNAL_TOKEN: ${SETTLEMENT_INTERNAL_TOKEN:?set SETTLEMENT_INTERNAL_TOKEN}

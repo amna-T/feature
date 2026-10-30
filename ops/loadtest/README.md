@@ -22,6 +22,35 @@ per call and fails about 2% of calls (the "errors" column).
 
 Peak API memory across all runs: 60 MB. No restarts or OOM kills.
 
+## Hosted box (Dilmune, 1 vCPU / 2 GB), 30 Oct 2026
+
+Measured on the live server through Caddy over HTTPS
+(`BASE_URL=https://168.144.75.125`), with `PG_POOL_MAX=10`, a dedicated load-test
+merchant, and k6 running **on the same 1 vCPU box** (so these figures are, if
+anything, conservative). Each step: 5 s ramp, 25 s hold.
+
+| Run | Offered (checkouts/s) | Completed | Checkout p50 / p95 | Request p95 | Shed (503) | Errors |
+|---|---|---|---|---|---|---|
+| 1 | 2, 4, 6, 8, 10, 14 | kept up at every step (7.1/s avg = offered avg) | 568 ms / 824 ms | 434 ms | 0 | 55 of 1,289 (4.3%) |
+| 2 | 14, 17, 20, 25, 30 | **14.5/s plateau** | 1.17 s / 1.69 s | 931 ms | 836 | 117 of 2,303 (5.1%) |
+
+- **Capacity: 14 checkouts/s sustained with p95 under 1 s; ceiling about 15/s.**
+  The bottleneck is the API's database pool (each checkout holds a connection
+  for ~0.3 s per acquirer call), not CPU or memory.
+- Past the ceiling the API answers `503 overloaded` + `Retry-After: 1` at once;
+  latency stays bounded (max 2.4 s) instead of queueing.
+- "Errors" are the simulator's deliberate ~2% failure per acquirer call (two
+  calls per checkout), not server faults.
+- No restarts of api, postgres or proxy during either run.
+- Under overload some captures are shed after their authorize succeeded
+  (278 in run 2). Those holds are never charged; they expire and are released
+  by `scripts/expire_holds.ts`, and a client retrying the capture with the same
+  Idempotency-Key completes it.
+
+To repeat it: create a load-test merchant and key (see the submission
+document), then
+`docker run --rm --network host -v "$PWD/ops/loadtest:/scripts" -e BASE_URL=https://<site> -e API_KEY=... -e K6_INSECURE_SKIP_TLS_VERIFY=true -e STEPS=14,17,20,25,30 grafana/k6:0.52.0 run /scripts/checkout.js`.
+
 ## What limits capacity
 
 Authorize and capture each hold a database connection for the whole acquirer
