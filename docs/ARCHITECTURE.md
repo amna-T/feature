@@ -90,6 +90,10 @@ the action. Credits above the threshold need a second approver.
 | `SETTLEMENT_INTERNAL_TOKEN` | api, settlement | `dev-token` in dev |
 | `ACQUIRER_CALLBACK_REQUIRE_SIGNATURE` | api | `false` |
 | `FEATURE_ASYNC_CLOSE` | settlement | `0` |
+| `LOGIN_WINDOW_MINUTES` | api | `15` |
+| `LOGIN_MAX_FAILURES_PER_ACCOUNT` | api | `5` |
+| `LOGIN_MAX_FAILURES_PER_IP` | api | `50` |
+| `OTP_MAX_CHALLENGES_PER_USER` | api | `5` (login and resend together) |
 
 The API is sized for 0.5 vCPU / 512 MB. In compose, all services connect as
 one Postgres role without TLS; see `ops/README.md`.

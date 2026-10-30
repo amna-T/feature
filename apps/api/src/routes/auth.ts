@@ -11,6 +11,12 @@ import {
 } from "../auth/sessions.js";
 import { withTransaction } from "../db/withTransaction.js";
 import { BadRequestError, GoneError, TooManyRequestsError, UnauthorizedError } from "../lib/errors.js";
+import {
+  assertChallengeAllowed,
+  beginLoginAttempt,
+  clearLoginAttempt,
+  merchantAccountKey,
+} from "../auth/loginLimits.js";
 
 /**
  * A pre-computed argon2id hash of a fixed, never-used dummy password, at
@@ -52,9 +58,19 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   /** POST /v1/auth/login — step 1. */
   app.post<{ Body: LoginBody }>("/login", async (request, reply) => {
     const { merchantId, email, password } = request.body ?? {};
-    if (!merchantId || !email || !password) {
+    if (
+      !merchantId || !email || !password ||
+      typeof merchantId !== "string" || typeof email !== "string" || typeof password !== "string"
+    ) {
       throw new BadRequestError("invalid_request", "merchantId, email and password are required");
     }
+
+    // Counted (and refused when over the limit) before any password hashing.
+    const attemptId = await beginLoginAttempt(app.db, reply, app.config, {
+      plane: "merchant",
+      accountKey: merchantAccountKey(merchantId, email),
+      ip: request.ip,
+    });
 
     const userResult = await app.db.query<MerchantUserRow>(
       `SELECT mu.id, mu.merchant_id, mu.email, mu.role, mu.password_hash
@@ -75,8 +91,10 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const recipient = user;
+    await clearLoginAttempt(app.db, attemptId);
 
     const { code, expiresAt, rawToken } = await withTransaction(app.db, async (client) => {
+      await assertChallengeAllowed(client, reply, app.config, { plane: "merchant", userId: recipient.id });
       const challenge = await issueChallenge(client, {
         merchantUserId: recipient.id,
         ttlMinutes: app.config.otpTtlMinutes,
@@ -232,6 +250,9 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const { code, expiresAt } = await withTransaction(app.db, async (client) => {
+      // A resend issues a fresh challenge too, so it counts towards the same
+      // per-user limit as a login.
+      await assertChallengeAllowed(client, reply, app.config, { plane: "merchant", userId: pending.merchantUserId });
       if (existingChallenge) {
         await client.query(`UPDATE otp_challenges SET consumed_at = now() WHERE id = $1`, [
           existingChallenge.id,
