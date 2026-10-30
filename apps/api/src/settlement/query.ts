@@ -1,4 +1,5 @@
 import type { Pool } from "pg";
+import { BadRequestError } from "../lib/errors.js";
 import { estimateFeeFils } from "../fees/estimate.js";
 
 const DEFAULT_LIMIT = 25;
@@ -265,7 +266,8 @@ export interface ReconciliationReport {
 function bahrainLocalMidnightUtc(dateStr: string): Date {
   const parsed = new Date(`${dateStr}T00:00:00+03:00`);
   if (Number.isNaN(parsed.getTime())) {
-    throw new RangeError(`bahrainLocalMidnightUtc: invalid date "${dateStr}"`);
+    // A date from the query string: bad input (400), not a server error.
+    throw new BadRequestError("invalid_date", `"${dateStr}" is not a date (YYYY-MM-DD)`);
   }
   return parsed;
 }

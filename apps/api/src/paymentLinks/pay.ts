@@ -96,16 +96,24 @@ export async function payPaymentLink(
   // Step 2 — authorize.
   // am: keys include link.id so two links can never collide on idempotency. good
   const authorizeKey = `paylink:${link.id}:${input.idempotencyKey}:authorize`;
-  const authResult = await authorizeTransaction(pool, acquirer, {
-    merchantId: link.merchantId,
-    amountFils: link.amountFils,
-    card: input.card,
-    reference: link.reference ?? undefined,
-    idempotencyKey: authorizeKey,
-    // No merchant session/API key initiated this — a customer did, via
-    // the public link.
-    actor: { type: "system" },
-  });
+  // Any unexpected failure here must not leave the link reserved (and so
+  // unpayable until the reservation times out): release it, then rethrow.
+  let authResult: Awaited<ReturnType<typeof authorizeTransaction>>;
+  try {
+    authResult = await authorizeTransaction(pool, acquirer, {
+      merchantId: link.merchantId,
+      amountFils: link.amountFils,
+      card: input.card,
+      reference: link.reference ?? undefined,
+      idempotencyKey: authorizeKey,
+      // No merchant session/API key initiated this — a customer did, via
+      // the public link.
+      actor: { type: "system" },
+    });
+  } catch (err) {
+    await releaseReservation(pool, link.id, link.reservationId);
+    throw err;
+  }
 
   if (authResult.statusCode !== 201) {
     await releaseReservation(pool, link.id, link.reservationId);

@@ -6,6 +6,7 @@ import {
 } from "../auth/requireMerchantAuth.js";
 import { createPaymentLink } from "../paymentLinks/create.js";
 import { getPublicPaymentLink } from "../paymentLinks/read.js";
+import { parseCardInput } from "../payments/card.js";
 import { payPaymentLink } from "../paymentLinks/pay.js";
 import { cancelPaymentLink } from "../paymentLinks/cancel.js";
 import { listPaymentLinks } from "../paymentLinks/query.js";
@@ -155,10 +156,10 @@ export async function paymentLinkPublicRoutes(app: FastifyInstance): Promise<voi
 
   app.post<{ Params: TokenParams; Body: PayPaymentLinkBody }>("/:token/pay", async (request, reply) => {
     const idempotencyKey = getIdempotencyKey(request);
-    const { card, submittedAt } = request.body ?? {};
-    if (!card) {
-      throw new BadRequestError("invalid_request", "card is required");
-    }
+    const { submittedAt } = request.body ?? {};
+    // Validated before the link is reserved: a malformed card used to crash
+    // mid-payment and leave the link stuck 'reserved' (unpayable).
+    const card = parseCardInput(request.body?.card);
 
     const result = await payPaymentLink(
       app.db,

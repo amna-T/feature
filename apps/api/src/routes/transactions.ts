@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from "fas
 import { toFils } from "@filspay/money";
 import { requireApiKey } from "../apiKeys/verify.js";
 import { requireMerchantAuth, requireMerchantRole, requireMerchantWriterActor } from "../auth/requireMerchantAuth.js";
+import { parseCardInput } from "../payments/card.js";
 import { authorizeTransaction, type AuthorizeInput } from "../payments/authorize.js";
 import { captureTransaction } from "../payments/capture.js";
 import { applyCaptureDiscountAdjustment } from "../payments/discountAdjustment.js";
@@ -104,19 +105,29 @@ function getIdempotencyKey(request: FastifyRequest): string {
  * via `requireMerchantAuth`.
  */
 export async function transactionRoutes(app: FastifyInstance): Promise<void> {
+  /** A positive whole number of fils, or 400. A negative, fractional, text or
+   *  out-of-range amount went straight into toFils and came back as a 500. */
+  function parseAmountFils(value: unknown) {
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+      throw new BadRequestError("invalid_amount", "amountFils must be a positive whole number of fils");
+    }
+    return toFils(value);
+  }
+
   app.post<{ Body: AuthorizeBody }>(
     "/",
     { preHandler: requireApiKey },
     async (request, reply) => {
       const idempotencyKey = getIdempotencyKey(request);
-      const { amountFils, card, reference } = request.body ?? {};
-      if (amountFils === undefined || !card) {
+      const { amountFils, reference } = request.body ?? {};
+      if (amountFils === undefined || !request.body?.card) {
         throw new BadRequestError("invalid_request", "amountFils and card are required");
       }
+      const card = parseCardInput(request.body.card);
 
       const input: AuthorizeInput = {
         merchantId: request.apiKeyAuth!.merchantId,
-        amountFils: toFils(amountFils),
+        amountFils: parseAmountFils(amountFils),
         card,
         reference,
         idempotencyKey,
@@ -137,7 +148,7 @@ export async function transactionRoutes(app: FastifyInstance): Promise<void> {
       const result = await captureTransaction(app.db, app.acquirer, {
         transactionId: request.params.id,
         merchantId: request.merchantAuth!.merchantId,
-        amountFils: amountFils !== undefined ? toFils(amountFils) : undefined,
+        amountFils: amountFils !== undefined ? parseAmountFils(amountFils) : undefined,
         idempotencyKey,
         actor: requireMerchantWriterActor(request.merchantAuth!),
       });
