@@ -131,6 +131,23 @@ export interface Config {
   loginMaxFailuresPerIp: number;
   /** OTP challenges issued per user (login + resend) before further get 429. */
   otpMaxChallengesPerUser: number;
+
+  /** Fastify log level (LOG_LEVEL). info logs every request, which costs real
+   *  CPU on 0.5 vCPU; hosted runs use warn. */
+  logLevel: string;
+  /** Proxy hops to trust for the client IP (TRUST_PROXY). 0 = trust none:
+   *  X-Forwarded-For is ignored, so it can't be spoofed to dodge per-IP
+   *  limits. Set to 1 only when a reverse proxy is in front (ops compose). */
+  trustProxyHops: number;
+  /** Load shedding: once this many requests are already waiting for a
+   *  database connection, new requests get a fast 503 + Retry-After instead
+   *  of queueing until PG_POOL_CONNECTION_TIMEOUT_MS. 0 disables it. */
+  loadShedMaxWaiting: number;
+  /** Server timeouts (ms): the whole request, an idle keep-alive socket, and
+   *  a new connection that never sends a request. */
+  requestTimeoutMs: number;
+  keepAliveTimeoutMs: number;
+  connectionTimeoutMs: number;
 }
 
 function parseNodeEnv(value: string | undefined): Config["nodeEnv"] {
@@ -277,5 +294,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     loginMaxFailuresPerAccount: parseIntEnv(env.LOGIN_MAX_FAILURES_PER_ACCOUNT, 5),
     loginMaxFailuresPerIp: parseIntEnv(env.LOGIN_MAX_FAILURES_PER_IP, 50),
     otpMaxChallengesPerUser: parseIntEnv(env.OTP_MAX_CHALLENGES_PER_USER, 5),
+
+    logLevel: env.LOG_LEVEL && env.LOG_LEVEL !== "" ? env.LOG_LEVEL : "info",
+    trustProxyHops: parseIntEnv(env.TRUST_PROXY, 0),
+    loadShedMaxWaiting: parseIntEnv(env.LOAD_SHED_MAX_WAITING, 20),
+    requestTimeoutMs: parseIntEnv(env.REQUEST_TIMEOUT_MS, 30_000),
+    keepAliveTimeoutMs: parseIntEnv(env.KEEP_ALIVE_TIMEOUT_MS, 5_000),
+    connectionTimeoutMs: parseIntEnv(env.CONNECTION_TIMEOUT_MS, 10_000),
   };
 }
