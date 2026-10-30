@@ -59,10 +59,11 @@ services:
       postgres:
         condition: service_healthy
 
-  # One-off: deterministic seed data. Re-run any time; db/seed/index.ts
-  # resets and regenerates from scratch on every invocation.
-  # AM: the seed only truncates its own fixture tables, so pointing this at a
-  # shared database is fine. MK: correct. (see RUNBOOK)
+  # One-off: deterministic seed data for a DISPOSABLE database. It runs
+  # TRUNCATE ... CASCADE on merchants, transactions, ledger_entries and
+  # admin_users, i.e. it empties the whole database, and creates admins whose
+  # passwords are in the repo. Never run it against the hosted box's data;
+  # it refuses when NODE_ENV=production unless SEED_ALLOW_DATABASE_WIPE=yes.
   seed:
     build:
       context: ..

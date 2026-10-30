@@ -59,6 +59,15 @@ func RecalculateMDR(ctx context.Context, db *pgxpool.Pool, merchantID uuid.UUID,
 	if err != nil {
 		return RecalcResult{}, fmt.Errorf("settlement: RecalculateMDR: load merchant: %w", err)
 	}
+	// "The merchant's current terms" are the fee schedule in force now, with
+	// merchants.mdr_bps only as the fallback, exactly as capture and
+	// CloseBatch resolve it. merchants.mdr_bps alone re-priced every
+	// scheduled merchant at the old default rate (no trigger keeps it in sync).
+	schedules, err := LoadFeeSchedules(ctx, tx, merchantID)
+	if err != nil {
+		return RecalcResult{}, fmt.Errorf("settlement: RecalculateMDR: load fee schedules: %w", err)
+	}
+	mdrBps = EffectiveMdrBpsAt(schedules, time.Now(), mdrBps)
 
 	rows, err := tx.Query(ctx, `
 		SELECT id, batch_date, status, gross_fils, fee_fils, net_payout_fils
