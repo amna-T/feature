@@ -10,7 +10,7 @@ import { toFils } from "@filspay/money";
 import { loadConfig } from "../config.js";
 import { issueApiKey } from "../apiKeys/issue.js";
 import { recordKycReview } from "../onboarding/review.js";
-import { createAcquirerSimulator } from "../acquirer/simulator.js";
+import { createAcquirerSimulator, SIMULATOR_CACHE_MAX_ENTRIES } from "../acquirer/simulator.js";
 import type { AcquirerSimulator } from "../acquirer/types.js";
 import { createPaymentLink } from "../paymentLinks/create.js";
 import { authorizeTransaction } from "../payments/authorize.js";
@@ -132,4 +132,15 @@ test("authorize records whether the sale was made in test mode", async () => {
     seen[String(testMode)] = row.rows[0]!.test_mode;
   }
   assert.deepEqual(seen, { false: false, true: true });
+});
+
+test("the acquirer simulator's idempotency cache is bounded but still replays recent keys", async () => {
+  const sim = createAcquirerSimulator(config);
+  const req = (k: string) => ({ acquirerReference: "acq_x", amountFils: toFils(100), idempotencyKey: k });
+  const first = await sim.capture(req("key-0"));
+  const total = SIMULATOR_CACHE_MAX_ENTRIES + 50;
+  await Promise.all(Array.from({ length: total }, (_, i) => sim.capture(req(`key-${i + 1}`))));
+  const recent = await sim.capture(req(`key-${total}`));
+  assert.equal(await sim.capture(req(`key-${total}`)), recent, "a recent retry gets the cached result");
+  assert.notEqual(await sim.capture(req("key-0")), first, "the oldest key was evicted, so memory stays bounded");
 });

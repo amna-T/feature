@@ -408,3 +408,15 @@ My teammate found these from reading the code. I checked each one against the co
 **Load note (R4-2):** the close now reads every unbatched capture older than the day (same partial index). On the seed data that is 1.5 ms instead of 0.9 ms per merchant. It runs once a night per merchant, never on a request path.
 
 Tests: `routes/round4.new.test.ts`, `settlement/run_daily_isolation_test.go`, `settlement/carry_forward_test.go`. Each fails on the old code.
+
+### Load (judging: "holding up under load", 0.5 vCPU / 512 MB)
+
+| # | Where | Why → what breaks | Fix |
+|---|---|---|---|
+| 🟠 L-1 | `acquirer/simulator.ts` | The three idempotency maps gained a key for every authorize, capture and refund and were never cleared ("cleared on restart"), so under sustained traffic the API's heap grows until the 512 MB limit | keep the newest 10,000 keys per operation; retries come within seconds |
+| 🟠 L-2 | `webhooks/archiveReplay.ts` | Create loaded the whole range and built one JSON string in Node; replay `JSON.parse`d all of it. A year of deliveries can OOM the API (N-10, R2-32). ADMIN.md says "pages of 1000" | Postgres builds the same JSON document (`json_agg` in one INSERT … SELECT); replay streams it through a cursor 1000 entries at a time. Format unchanged, so existing tests pass |
+| 🟡 L-3 | migration `0080` | The settlement summary read every `transaction_events` row (3.4 s for Delta, July perf note), and the cost grows with all history | partial index on capture events by `occurred_at`. 480k events, single worker: 160 ms → 67 ms |
+
+The July perf note's "timing difference that resolves at month end" (an AI explanation) was wrong: that 38 % was the M-9 over-count bug.
+
+Tests: `round4.new.test.ts` (cache bound), `archiveReplay.paging.new.test.ts` (2,500 deliveries across pages).
