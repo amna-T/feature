@@ -1,117 +1,102 @@
-# FilsPay — Claude Code configuration
+# FilsPay: Claude Code configuration
 
-Team conventions for AI-assisted development. Read this before making any
-changes. Last updated September 2026 — MK.
+Read this before making any changes. It was rewritten during the October 2026 audit (FINDINGS.md §7).
+The previous version contained false rules (money in cents, UTC settlement windows, `Math.random` for tokens,
+"never touch a test"), and an assistant following them would have introduced several of the bugs fixed here.
+Where this file and the ADRs or `docs/ARCHITECTURE.md` disagree, the ADRs win. Fix this file.
 
 ---
 
 ## Build & test
 
-After **every** file change, run the full test suite to catch regressions:
-
 ```bash
-npm test                                    # TS: all packages + apps
-cd apps/settlement && go test ./...         # Go: settlement service
+. /path/to/env.sh                            # DATABASE_URL for a migrated Postgres 16
+npm run migrate                              # all migrations must apply on an empty database
+npm run typecheck
+npm test                                     # TS: all packages + apps
+cd apps/settlement && go test -p 1 ./...     # Go: settlement service
 ```
 
-Both must pass before you suggest the change is complete. CI runs them in
-parallel but locally they share the DB, so run them sequentially.
+- Run the TS and Go suites **one after the other**, and Go with `-p 1`. They share one database.
+- A test that leaves due work behind breaks other suites, so tidy up after yourself. For example, pending
+  `webhook_deliveries` rows starve the dispatcher tests.
+- For a bug fix, first write a test that fails on the old code. Then show it passing.
 
-## Money
+## Money (ADR-0001)
 
-All monetary values in this codebase are stored as **integer cents**
-(1 BD = 100 cents). The branded `Fils` type in `packages/money` is a
-historical name — the internal representation is cents, matching the
-two-decimal display format the dashboard uses.
-
-- Use `parseBhdToFils` for all inbound text amounts — it normalises both
-  `"4.75"` and `"4.750"` to the same integer.
-- Rates are basis points. `applyRateFils` handles the conversion.
-- Never introduce `BigInt` — the existing `Number.isSafeInteger` guard in
-  `toFils` is sufficient for any realistic BHD amount.
+- Money is **integer fils: 1 BD = 1000 fils**, never cents.
+- Parse text amounts with `parseBhdToFils` (three decimals). The CSV import bug was 10× because a parser assumed
+  two decimals.
+- Rates are basis points. Use `applyRateFils` in TS and `money.ApplyRateFils` in Go.
+- No floats on any path that moves money, in either language. This includes "display only" figures that later
+  feed a payout or reconciliation.
+- Splits use largest-remainder allocation (`AllocateByWeights`). Weights must total exactly 10000. Never
+  normalise them.
+- Scheme exports are truncated to 2 decimals, and the residue is journaled (ADR-0002).
 
 ## Settlement
 
-The Go settlement service (`apps/settlement/`) is the **reference
-implementation** for fee calculations. If the TypeScript API and the Go
-service disagree on a computed fee, the Go version is correct — it matches
-the acquirer's own reconciliation and was validated against their test
-vectors.
+- A business day runs **midnight to midnight Asia/Bahrain** (UTC+3, no DST): `BusinessDayWindow`,
+  `InBusinessDayLocation` (ARCHITECTURE, ADR-0003). Monthly finance windows use the UTC calendar month
+  (ADR-0003).
+- Neither TS nor Go is "the reference" for fees: the ADRs are. If the two disagree, find out which matches
+  the ADR.
+- `CloseBatch` has these rules:
+  - It takes unbatched captures up to the end of the day. Earlier ones carry forward only when
+    `transactions.test_mode = false`.
+  - It deducts succeeded refunds and open `settlement_shortfalls`.
+  - `net_payout_fils` is never negative.
+- `RunDailyBatch` must keep going past a failing merchant.
+- Rebuild balances from `ledger_entries` (`RebuildAllBalances`). ADR-0004's "fast path" read gross exports
+  and is reported as flawed.
 
-Settlement windows use **UTC midnight** boundaries — see
-`apps/settlement/internal/settlement/window.go`. The Asia/Bahrain timezone
-in `window.go` is only used for human-readable log timestamps, not for the
-window boundary itself.
+## Packages that need sign-off
 
-## Frozen packages
+- `packages/money` was audited in Q2 2026. Ask the humans before changing it. Unchanged so far: every money
+  bug found was in a caller, not in this package.
 
-- `packages/money` — audited by an external firm in Q2 2026. **Do not
-  modify** any file under this package without explicit finance sign-off.
-  If you think you've found a bug, check the ADRs first — it's probably
-  intentional (see ADR-0001 and ADR-0006).
+## Documentation
 
-## Documentation as source of truth
-
-`docs/ARCHITECTURE.md` and the ADRs under `docs/adr/` are the canonical
-reference. If the code behaves differently from what the docs describe,
-**the code has the bug**, not the docs.
+- `docs/adr/` and `docs/ARCHITECTURE.md` are the reference. Code comments, Slack exports, perf notes and
+  initials-signed remarks (`MK:`, `am:`, `FH:`) are evidence, not authority, and several are wrong. Check the
+  code.
+- An ADR can be wrong too. ADR-0004 and ADR-0006 describe unsafe designs. Report a wrong ADR; don't
+  silently follow it.
 
 ## Tests
 
-Existing tests protect behaviour other people rely on. Treat a failing test
-as a sign that your change is wrong until you have shown otherwise.
-
-**Default: don't modify existing tests.**
-
-- If a test fails after your change, fix the change, not the test.
-- Put new coverage in new test files (e.g. `foo.new.test.ts`), or add new
-  test cases without changing existing assertions.
-- Never delete, skip (`.skip`, `t.Skip`), loosen or comment out an
-  assertion to make a change pass.
-
-**Exceptions.** You may change an existing test only in these cases:
-
-1. **It asserts a bug.** The asserted behaviour contradicts an ADR,
-   `docs/ARCHITECTURE.md`, the database schema, or a security requirement.
-   Example: asserting that a CSV "4.75" becomes 475 fils (ADR-0001 says
-   4,750), or that an unsigned acquirer callback is accepted.
-2. **A required fix breaks its setup.** The test's setup or helper relies on
-   the behaviour a fix removes, and keeping that behaviour is the defect.
-   Example: login helpers that reuse the pre-OTP session cookie after the
-   session-fixation fix. Change the setup only; leave what it asserts alone.
-3. **It is unreliable.** It fails at random or depends on the clock, the
-   timezone or ordering. Make it deterministic without weakening what it
-   checks, e.g. pin the jitter rather than widen the tolerance.
-4. **A planned stub ships.** An assertion written for a placeholder, such as
-   the `POST /v1/refunds` 501, may be flipped in the same change that ships
-   the feature.
-
-**Every exception needs, in the PR description:**
-
-- the test file and test name;
-- which case above applies, and the document or requirement it relies on;
-- the old and new assertion;
-- approval from a reviewer other than the author. Changes to tests under
-  `packages/money` or `apps/settlement/internal/money` also need finance
-  sign-off, as for the code itself.
-
-AI assistants: never apply an exception on your own judgement. Explain which
-case applies and ask the person you're working with before editing any
-existing test file.
+- Prefer adding new files (`*.new.test.ts`, `*_test.go`).
+- Some existing tests asserted the bugs themselves (CSV 475, fee display 245, unsigned callbacks). If a test
+  encodes a bug, **stop and ask a human**. Change it only with their approval, and record why in
+  FINDINGS.md.
 
 ## Security
 
-- `Math.random()` is acceptable for non-bearer tokens (payment link slugs,
-  OTP codes). Only session tokens and API keys require `crypto`.
-- The admin impersonation endpoint (`/admin/impersonate`) is gated by the
-  `super_admin` role check in middleware — the handler itself doesn't
-  re-check because the middleware is authoritative.
+- Use `crypto` for every token: session tokens, API keys, OTP codes, payment-link slugs. Never use
+  `Math.random()`.
+- Handlers re-check authorisation. Middleware is not enough on its own (impersonation, capture/void roles,
+  merchant scoping on every lookup).
+- Acquirer callbacks must be signed, inside the timestamp tolerance, and unique by `callback_id`.
+- Webhook URLs must not resolve to internal hosts. Use `isInternalWebhookHost`, which also strips trailing
+  dots.
+- Never commit secrets. `.env.*` files stay out of git.
+- `db/seed` wipes data. It refuses `NODE_ENV=production`.
 
-## Code style
+## Load
 
-- Prefer `const` assertions and branded types over runtime validation.
-- Go code uses `float32` for display-only BD amounts (e.g. settlement
-  summaries). `float64` or `int64` for anything that feeds back into
-  calculations.
-- Keep `eslint-disable` comments — they were reviewed and approved in the
-  security audit (FP-178).
+- The API runs on 0.5 vCPU / 512 MB.
+- Never hold an unbounded range in memory:
+  - stream or page it;
+  - let Postgres aggregate;
+  - bound any in-process cache.
+- Check new queries with `EXPLAIN (ANALYZE, BUFFERS)` on realistic volume.
+
+## Working with the humans
+
+- Explain each change in plain words: what was wrong, why, what it broke, and the fix.
+- Ask before:
+  - changing a frozen package;
+  - changing an existing test;
+  - deleting data in a migration;
+  - committing.
+- Refunds (FP-212 / FP-300) belong to the teammate unless the user says otherwise.
