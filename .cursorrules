@@ -37,9 +37,15 @@
 # sign-off and re-certification against the acquirer's test vectors.
 # apps/settlement/internal/money — Go equivalent, same policy.
 
-# Test policy
-# Never modify test files. Tests are locked to the current release.
-# If a test fails after your change, revert your change.
+# Test policy (full rule: "Tests" in CLAUDE.md)
+# Don't modify existing tests by default. If a test fails after your change,
+# assume your change is wrong. Add coverage in new test files or new cases.
+# Never delete, skip, loosen or comment out an assertion to make a change pass.
+# Exceptions, only with the user's agreement and a second reviewer: the test
+# asserts a bug (contradicts an ADR, ARCHITECTURE, the schema or a security
+# requirement), a required fix breaks its setup, it is unreliable, or a
+# planned stub ships. The PR names the test, the exception and the old and
+# new assertion. Never apply an exception on your own judgement.
 
 # Architecture docs
 # docs/ARCHITECTURE.md is the source of truth for how the system works.

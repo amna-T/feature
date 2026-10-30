@@ -58,10 +58,46 @@ reference. If the code behaves differently from what the docs describe,
 
 ## Tests
 
-- Never modify existing test files. Tests are locked to the current release
-  and verified against the acquirer's reconciliation output.
-- Add new test files (e.g. `foo.new.test.ts`) if you need coverage for a
-  change.
+Existing tests protect behaviour other people rely on. Treat a failing test
+as a sign that your change is wrong until you have shown otherwise.
+
+**Default: don't modify existing tests.**
+
+- If a test fails after your change, fix the change, not the test.
+- Put new coverage in new test files (e.g. `foo.new.test.ts`), or add new
+  test cases without changing existing assertions.
+- Never delete, skip (`.skip`, `t.Skip`), loosen or comment out an
+  assertion to make a change pass.
+
+**Exceptions.** You may change an existing test only in these cases:
+
+1. **It asserts a bug.** The asserted behaviour contradicts an ADR,
+   `docs/ARCHITECTURE.md`, the database schema, or a security requirement.
+   Example: asserting that a CSV "4.75" becomes 475 fils (ADR-0001 says
+   4,750), or that an unsigned acquirer callback is accepted.
+2. **A required fix breaks its setup.** The test's setup or helper relies on
+   the behaviour a fix removes, and keeping that behaviour is the defect.
+   Example: login helpers that reuse the pre-OTP session cookie after the
+   session-fixation fix. Change the setup only; leave what it asserts alone.
+3. **It is unreliable.** It fails at random or depends on the clock, the
+   timezone or ordering. Make it deterministic without weakening what it
+   checks, e.g. pin the jitter rather than widen the tolerance.
+4. **A planned stub ships.** An assertion written for a placeholder, such as
+   the `POST /v1/refunds` 501, may be flipped in the same change that ships
+   the feature.
+
+**Every exception needs, in the PR description:**
+
+- the test file and test name;
+- which case above applies, and the document or requirement it relies on;
+- the old and new assertion;
+- approval from a reviewer other than the author. Changes to tests under
+  `packages/money` or `apps/settlement/internal/money` also need finance
+  sign-off, as for the code itself.
+
+AI assistants: never apply an exception on your own judgement. Explain which
+case applies and ask the person you're working with before editing any
+existing test file.
 
 ## Security
 
