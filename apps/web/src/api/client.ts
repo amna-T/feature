@@ -1,6 +1,10 @@
 import type { ApiErrorBody } from "../types.js";
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:3000";
+// Same origin by default: in dev Vite proxies /v1, and when hosted Caddy
+// serves this app and proxies /v1 to the API. The old fallback,
+// http://localhost:3000, made a production build call the visitor's own
+// machine, since the empty value lives only in .env.development.
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "";
 
 /** Mirrors apps/api's own uniform `{ error, message? }` body
  *  (lib/errors.ts / plugins/errorHandler.ts) — one error shape end to

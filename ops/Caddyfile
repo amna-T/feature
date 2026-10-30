@@ -1,13 +1,44 @@
-# TLS reverse proxy in front of apps/api. SITE_ADDRESS is the public host
-# name (Caddy obtains and renews its certificate); the default `localhost`
-# uses Caddy's local CA. Caddy sets X-Forwarded-For, which the API trusts
+# Public entry point: TLS for everything, the two frontends as static files,
+# and the API behind them on the same origin (the apps call relative /v1, and
+# the API has no CORS).
+#
+#   https://SITE_ADDRESS/        merchant dashboard and checkout (/pay/...)
+#   https://SITE_ADDRESS:8443/   admin console
+#
+# SITE_ADDRESS is the public host name or IP. With a domain Caddy obtains and
+# renews a real certificate; with an IP or `localhost` it uses its own local
+# CA, so browsers warn once. Caddy sets X-Forwarded-For, which the API trusts
 # for exactly one hop (TRUST_PROXY=1 in docker-compose.yml).
-{$SITE_ADDRESS:localhost} {
-	encode gzip
-	reverse_proxy api:3000 {
-		# Fail fast when the API is down or restarting.
-		transport http {
-			dial_timeout 3s
+
+(api) {
+	@api path /v1/* /healthz /readyz
+	handle @api {
+		reverse_proxy api:3000 {
+			# Fail fast when the API is down or restarting.
+			transport http {
+				dial_timeout 3s
+			}
 		}
 	}
+}
+
+(spa) {
+	handle {
+		root * {args[0]}
+		# Client-side routes (/dashboard/..., /pay/...) all load index.html.
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+{$SITE_ADDRESS:localhost} {
+	encode gzip
+	import api
+	import spa /srv/web
+}
+
+{$SITE_ADDRESS:localhost}:8443 {
+	encode gzip
+	import api
+	import spa /srv/admin
 }

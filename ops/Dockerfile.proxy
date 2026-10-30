@@ -1,0 +1,30 @@
+# Caddy with the two frontends built in. Build from the repo root:
+#   docker build -f ops/Dockerfile.proxy --build-arg SITE_ADDRESS=example.com -t filspay-proxy .
+# The apps call the API on their own origin (/v1), which Caddy proxies.
+
+# ---------------------------------------------------------------- build
+FROM node:22-bookworm-slim AS build
+WORKDIR /app
+# Every workspace manifest, so npm ci can match the lockfile; only the
+# frontends and what they import are installed.
+COPY package.json package-lock.json ./
+COPY packages/money/package.json packages/money/
+COPY packages/events/package.json packages/events/
+COPY apps/api/package.json apps/api/
+COPY apps/reporting/package.json apps/reporting/
+COPY apps/web/package.json apps/web/
+COPY apps/admin/package.json apps/admin/
+RUN npm ci --no-audit --no-fund \
+      --workspace packages/money --workspace apps/web --workspace apps/admin \
+      --include-workspace-root
+COPY . .
+# The admin console links to the merchant dashboard ("view as merchant").
+ARG SITE_ADDRESS=localhost
+ENV VITE_WEB_BASE_URL=https://${SITE_ADDRESS}
+RUN npm run build --workspace apps/web && npm run build --workspace apps/admin
+
+# ---------------------------------------------------------------- runtime
+FROM caddy:2-alpine
+COPY ops/Caddyfile /etc/caddy/Caddyfile
+COPY --from=build /app/apps/web/dist /srv/web
+COPY --from=build /app/apps/admin/dist /srv/admin
