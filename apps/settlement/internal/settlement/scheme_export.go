@@ -24,10 +24,12 @@ func TruncateToSchemeAmount(grossFils money.Fils) money.Fils {
 	return (grossFils / 10) * 10
 }
 
-// SchemeAmountBD converts a transaction's gross fils to the BD value stored
-// in scheme_export_lines.amount (numeric(10,2)).
-func SchemeAmountBD(grossFils money.Fils) float64 {
-	return float64(grossFils) / 1000.0
+// SchemeAmountBD returns the BD value stored in scheme_export_lines.amount
+// (numeric(10,2)) as an exact "D.DD" string: the fils amount truncated to the
+// scheme's 10-fil step, formatted with integer arithmetic (ADR-0001: no
+// float on money; ADR-0002: amount is exactly amount_fils / 1000 at 2dp).
+func SchemeAmountBD(grossFils money.Fils) string {
+	return formatFilsAsTwoDecimalString(TruncateToSchemeAmount(grossFils))
 }
 
 // buildBatchClosedPayload builds the settlement.batch_closed outbox
