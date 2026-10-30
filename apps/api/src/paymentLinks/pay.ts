@@ -149,6 +149,14 @@ export async function payPaymentLink(
   });
 
   if (captureResult.statusCode !== 200) {
+    // Void the authorization we just made, as the reservation-lost branch
+    // does; otherwise the cardholder's hold stays until expire_holds runs
+    // and every retry of this link stacks another one.
+    await voidTransaction(pool, {
+      transactionId: txnId,
+      merchantId: link.merchantId,
+      actor: { type: "system", id: link.id },
+    });
     await releaseReservation(pool, link.id, link.reservationId);
     return {
       statusCode: captureResult.statusCode,

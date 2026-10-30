@@ -81,5 +81,11 @@ export function parseCreditRequestInput(body: unknown): CreditRequestDraft {
     );
   }
 
+  // Bahrain is fixed UTC+3; credits post at Bahrain midnight of this date.
+  const todayBahrain = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  if (rawDate > todayBahrain) {
+    throw new BadRequestError("invalid_effective_date", "effectiveDate must be today or earlier");
+  }
+
   return { baseAmountFils, reasonCode, memo, reverseFee, effectiveDate: rawDate };
 }

@@ -22,7 +22,9 @@ import { decodeEncryptionKey, encryptSecret } from "./secretCrypto.js";
  * (DNS rebinding) would need a resolve-time check in the transport too.
  */
 export function isInternalWebhookHost(hostname: string): boolean {
-  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  // A trailing dot is the same host to DNS ("localhost." is localhost,
+  // "settlement." the compose service), so strip it before comparing.
+  const host = hostname.replace(/^\[|\]$/g, "").replace(/\.+$/, "").toLowerCase();
   if (isIP(host) === 4) {
     const [a, b] = host.split(".").map(Number) as [number, number];
     return (
