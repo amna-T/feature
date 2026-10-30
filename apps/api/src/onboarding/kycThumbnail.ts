@@ -5,6 +5,8 @@ import type { DetectedFileType } from "./fileSignature.js";
  * Longest side, in pixels.
  */
 const THUMBNAIL_MAX_DIMENSION_PX = 320;
+/** ~40 MP: far above any phone photo or scan, far below a decompression bomb. */
+const MAX_INPUT_PIXELS = 40_000_000;
 
 export interface GeneratedThumbnail {
   buffer: Buffer;
@@ -27,11 +29,17 @@ export async function generateKycThumbnail(
   if (detectedType !== "jpeg" && detectedType !== "png") {
     return null;
   }
-  // YA: the 8 MiB upload cap protects us here
-  // FH: sharp's default pixel limit is ~268MP, a tiny png can decode huge. copilot suggests limitInputPixels
-  const resized = await sharp(buffer)
-    .resize(THUMBNAIL_MAX_DIMENSION_PX, THUMBNAIL_MAX_DIMENSION_PX, { fit: "inside", withoutEnlargement: true })
-    .jpeg({ quality: 70 })
-    .toBuffer();
-  return { buffer: resized, mimeType: "image/jpeg" };
+  // The 8 MiB upload cap bounds the compressed size only: a small PNG can
+  // declare 16000x16000 and decode to ~1 GB under sharp's default ~268 MP
+  // limit, on a 512 MB API container. Cap the decoded size; a document that
+  // can't be thumbnailed is still a valid upload, just without a preview.
+  try {
+    const resized = await sharp(buffer, { limitInputPixels: MAX_INPUT_PIXELS })
+      .resize(THUMBNAIL_MAX_DIMENSION_PX, THUMBNAIL_MAX_DIMENSION_PX, { fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 70 })
+      .toBuffer();
+    return { buffer: resized, mimeType: "image/jpeg" };
+  } catch {
+    return null;
+  }
 }

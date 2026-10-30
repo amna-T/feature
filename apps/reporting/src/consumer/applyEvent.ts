@@ -188,7 +188,25 @@ export async function applyDailySummaryRollup(
  * filters to the three types handled below, so this branch should never
  * actually run against real data.
  */
+async function applyBatchPaid(client: PoolClient, row: OutboxEventRow): Promise<void> {
+  const payload = row.payload as { batchId: string };
+  await client.query(
+    `UPDATE merchant_payout_trends mpt
+        SET status = sb.status, paid_at = sb.paid_at, last_updated_at = now()
+       FROM settlement_batches sb
+      WHERE sb.id = $1 AND mpt.settlement_batch_id = sb.id`,
+    [payload.batchId],
+  );
+}
+
 export async function applyEvent(client: PoolClient, row: OutboxEventRow): Promise<void> {
+  // An event that names no merchant can't be rolled up anywhere. Throwing on
+  // it (a NOT NULL violation) rolled back every pass, so one malformed outbox
+  // row stopped all reporting for good. Skip it loudly and move on.
+  if (typeof row.payload?.merchantId !== "string" && row.event_type !== "settlement.paid") {
+    console.warn(`[reporting/consumer] skipping outbox event ${String(row.id)} (${row.event_type}): no merchantId`);
+    return;
+  }
   switch (row.event_type) {
     case "transaction.captured":
       return applyTransactionCaptured(client, row);
@@ -196,6 +214,8 @@ export async function applyEvent(client: PoolClient, row: OutboxEventRow): Promi
       return applyTransactionVoided(client, row);
     case "settlement.batch_closed":
       return applyBatchClosed(client, row);
+    case "settlement.paid":
+      return applyBatchPaid(client, row);
     default:
       throw new Error(`applyEvent: unhandled event_type ${row.event_type}`);
   }

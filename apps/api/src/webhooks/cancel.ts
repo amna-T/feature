@@ -12,14 +12,31 @@ export type DeleteWebhookEndpointResult = "deleted" | "not_found";
  * CASCADE) — the delivery log is a durable audit trail that survives the
  * endpoint registration that produced it being removed.
  */
-// FH: docblock says deliveries are kept and there's no ON DELETE CASCADE — then the FK blocks the DELETE and we 500?
-// YA: FK is ON DELETE SET NULL (0029). fine
+// webhook_deliveries.endpoint_id is NOT NULL with a plain FK (0022; the
+// "ON DELETE SET NULL (0029)" this once relied on never existed), so deleting
+// an endpoint that had ever delivered was a foreign-key 500. An endpoint with
+// history is disabled instead, which keeps its delivery log intact.
 export async function deleteWebhookEndpoint(
   pool: Pool,
   input: { merchantId: string; id: string },
 ): Promise<DeleteWebhookEndpointResult> {
   const result = await pool.query<{ id: string }>(
-    `DELETE FROM webhook_endpoints WHERE id = $1 AND merchant_id = $2 RETURNING id`,
+    `WITH target AS (
+       SELECT we.id,
+              EXISTS (SELECT 1 FROM webhook_deliveries wd WHERE wd.endpoint_id = we.id)
+              OR EXISTS (SELECT 1 FROM webhook_delivery_archives wa WHERE wa.endpoint_id = we.id) AS has_history
+         FROM webhook_endpoints we
+        WHERE we.id = $1 AND we.merchant_id = $2
+     ), disabled AS (
+       UPDATE webhook_endpoints SET status = 'disabled', updated_at = now()
+        WHERE id IN (SELECT id FROM target WHERE has_history)
+       RETURNING id
+     ), deleted AS (
+       DELETE FROM webhook_endpoints
+        WHERE id IN (SELECT id FROM target WHERE NOT has_history)
+       RETURNING id
+     )
+     SELECT id FROM disabled UNION ALL SELECT id FROM deleted`,
     [input.id, input.merchantId],
   );
   return result.rows[0] ? "deleted" : "not_found";

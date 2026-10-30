@@ -43,9 +43,10 @@ export async function insertReplayDeliveryRow(
   client: PoolClient,
   original: OriginalDelivery,
 ): Promise<ReplayResult> {
-  // MK: new id per replay on purpose, receivers dedupe on the original id in the body
-  // FH: ARCH §5 says Webhook-Delivery-Id is stable across retries and replays — this mints a new one?
-  const newDeliveryEventId = randomUUID();
+  // Webhook-Delivery-Id (and the envelope's `id`) must be stable across
+  // retries AND replays (ARCHITECTURE, headers.ts): it is what receivers
+  // dedupe on. Minting a new one made every replay look like a new event.
+  const newDeliveryEventId = typeof original.payload.id === "string" ? original.payload.id : randomUUID();
   const replayPayload = { ...original.payload, id: newDeliveryEventId };
 
   const insertResult = await client.query<{ id: string; status: string }>(

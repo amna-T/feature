@@ -64,7 +64,12 @@ export async function recordKycDocument(
   // already confirmed the bytes are one of our three accepted formats, so
   // this only narrows which of those three this particular document type
   // requires.
-  if (PDF_ONLY_DOCUMENT_TYPES.includes(input.documentType) && !input.fileName.toLowerCase().endsWith(".pdf")) {
+  // Both the bytes and the name must say PDF. The name alone let a JPEG
+  // named cr.pdf through, although `detected` already knew it was a JPEG.
+  if (
+    PDF_ONLY_DOCUMENT_TYPES.includes(input.documentType) &&
+    (detected !== "pdf" || !input.fileName.toLowerCase().endsWith(".pdf"))
+  ) {
     throw new UnprocessableEntityError("document_must_be_pdf", "commercial_registration and bank_letter documents must be a PDF");
   }
 

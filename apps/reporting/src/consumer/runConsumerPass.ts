@@ -10,6 +10,9 @@ export const REPORTING_EVENT_TYPES: readonly EventType[] = [
   "transaction.captured",
   "transaction.voided",
   "settlement.batch_closed",
+  // A trend row is written as 'closed' at batch close; without this it never
+  // became 'paid' and its paid_at stayed null.
+  "settlement.paid",
 ];
 
 /**

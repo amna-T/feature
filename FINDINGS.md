@@ -263,6 +263,75 @@ Severity: 🔴 critical · 🟠 high · 🟡 medium.
 
 ---
 
+## 8. Round 2: refunds (PR #3) and the second sweep
+
+Same format: **where** · **why** · **breaks** · **fix**. All fixed unless marked.
+
+### Refunds (FP-212 follow-up, merged in #3)
+
+| # | Where | Why → what breaks | Fix |
+|---|---|---|---|
+| 🔴 F-1 | `payments/processRefund.ts` | `reason ?? null` against `chk_refunds_reason_not_null` (0070) → every refund without a reason was a 500 | default `"unspecified"` |
+| 🔴 F-2 | `settlement/batch.go` CloseBatch | refunds were never deducted at settlement → a refunded sale was paid out in full (reproduced: 9775 paid after a 4.000 BD refund) | refunds claimed per batch, net of reversed fee; carry forward; migration 0076 |
+| 🟠 F-3 | `processRefund.ts` | each partial fee reversal rounded alone → 3 partials of a 250-fils fee returned 249 | cap at the fee not yet reversed; last refund takes the remainder |
+
+### Security
+
+| # | Where | Why → what breaks | Fix |
+|---|---|---|---|
+| 🔴 R2-1 | `auth/sessions.ts`, `adminAuth/sessions.ts` | **Session fixation (FP-198).** The token is not changed at OTP verification, so a copied or planted pre-OTP cookie becomes a full session. The merchant cookie was also never re-set, so it expired after the 10-minute pending lifetime ("the 10 min logouts"). | new token at promotion, cookie re-set at full TTL |
+| 🟠 R2-2 | `routes/transactions.ts` | capture/void accepted any merchant actor → the read-only `support` role and admin impersonation (recorded as `merchant_session`) could move money | owner/finance only, impersonation refused |
+| 🟠 R2-3 | `payments/authorize.ts` | only KYC approval checked → **suspended/closed merchants kept taking card payments** | require `status = 'active'` |
+| 🟠 R2-4 | `webhooks/create.ts` | **SSRF:** https was the only rule; 10.x, 169.254.169.254, `settlement:8091`… accepted, and "send test event" returns the response body | block internal hosts in production |
+| 🟠 R2-5 | `webhooks/transport.ts` | follows redirects (bypasses R2-4) and reads unbounded bodies (OOM on 512 MB) | `redirect: "manual"`, 64 KiB cap |
+| 🟠 R2-6 | `onboarding/kycThumbnail.ts` | sharp's default ~268 MP limit: a small PNG decodes to ~1 GB → API OOM; a thumbnail error also 500ed the upload | 40 MP cap, failure = no preview |
+| 🟡 R2-7 | `onboarding/kyc.ts` | PDF-only documents checked by filename → a JPEG named `cr.pdf` passed | bytes **and** name must be PDF |
+| 🟡 R2-8 | `plugins/multipart.ts` | unlimited files per request ("enforced in kyc.ts" — it wasn't) | `files: 1` |
+| 🟡 R2-9 | `routes/reporting.ts` | `/export-summary` has no auth preHandler → always 500 | `requireMerchantAuth` |
+| 🟡 R2-10 | `ops/docker-compose.yml` | `.env.docker` never loaded → hosted API ran with NODE_ENV unset (**dev mode: OTP code in login responses and logs**, insecure cookies); daemon exits without its token; Postgres published on 0.0.0.0 with the dev password; Dockerfiles referenced don't exist (not fixed) | `env_file`, required secrets, loopback bind |
+| 🟡 R2-11 | `docs/exports/admin-audit-2026-09.csv` | **evidence:** `support.rota1/2` performed KYC approvals, key rotations, settlement runs and −62,589 BD balance adjustments in September — all finance-only today. Prod ran without these role gates, or those accounts were elevated. *Reported* | — |
+
+### Money and settlement
+
+| # | Where | Why → what breaks | Fix |
+|---|---|---|---|
+| 🔴 R2-12 | `settlement/batch.go` RunDailyBatch | run-batch (CLI/admin) accepted **today or a future date** → the day closes early, later same-day captures never join a batch → never paid | refuse until the Bahrain day has ended |
+| 🟠 R2-13 | `paymentLinks/pay.ts` | negotiated discount journaled only on the API capture route → payment-link sales over-charged in the ledger vs settlement → permanent payable remainder | apply the same adjustment |
+| 🟠 R2-14 | `admin/transactionStatusRecompute.ts` | recompute rewrote **chargebacks** into captured/refunded; open-auth count always 0 (why test_mode was cleared) | exclude chargebacks, count directly |
+| 🟠 R2-15 | `ledger/rebuild.go` vs `balances/cache.go` | *Reported, design decision:* rebuild = ledger (includes unbatched captures), incremental = closed batches only → after a rebuild, closing those captures counts them twice → permanent upward drift (matches September's "reset to statement after rebuild" adjustments). Rebuild also has no lock against a concurrent close (YA's TODO) | — |
+| 🟡 R2-16 | `db/migrations/0072` | refund summary joined `t.id = r.id` → always empty; double-summed captures | 0077 recreates it |
+| 🟡 R2-17 | `transactions` table | no DB backstop for `refunded_fils <= captured_fils` | 0077 CHECK (NOT VALID) |
+| 🟡 R2-18 | `config/config.go` | `PGCONN_SETTLEMENT` overrode `DATABASE_URL` (its test points it at a read replica, where batch writes fail); all docs say fallback | fallback only |
+| 🟡 R2-19 | `admin/settlementClient.ts` | dead `notifySettlementRefundAdjustment` sent `fils / 10` to an endpoint that doesn't exist — a trap for whoever wires refunds | removed |
+
+### Webhooks, reporting, frontend
+
+| # | Where | Why → what breaks | Fix |
+|---|---|---|---|
+| 🟠 R2-20 | `webhooks/dispatcher.ts` | step B never claimed rows → two API replicas (staging since June) send every delivery twice | lease under `FOR UPDATE SKIP LOCKED` |
+| 🟠 R2-21 | `webhooks/replay.ts` | replays minted a new `Webhook-Delivery-Id` → receivers can't dedupe (contradicts schema + ARCHITECTURE) | keep the original id |
+| 🟡 R2-22 | `webhooks/cancel.ts` | deleting an endpoint with deliveries hit the NOT NULL FK → 500 ("SET NULL (0029)" never existed) | disable when it has history |
+| 🟡 R2-23 | `apps/reporting` | payout trends stayed `closed`, `paid_at` null (settlement.paid not consumed) | consume `settlement.paid` |
+| 🟡 R2-24 | `admin/reportingRebuild.ts` | rebuild truncated rollups without moving the cursor → unconsumed events counted twice | advance cursor in the same tx |
+| 🟡 R2-25 | `analytics/query.ts` | ledger activity used inclusive `BETWEEN` (others half-open) on a non-indexable cast | half-open timestamp range |
+| 🟡 R2-26 | `apps/web/src/format.ts` | `bhd()` threw on negatives → reconciliation page crashed on a negative gap; date filters used UTC midnight ("fixed" note was false) | allow negatives, Bahrain day start |
+| 🟡 R2-27 | `apps/web`, `apps/admin` | API has no CORS → neither frontend could log in locally | Vite `/v1` dev proxy |
+| 🟡 R2-35 | `apps/reporting` applyEvent | one outbox event with no `merchantId` threw in every pass and rolled it back → **reporting stopped permanently** (poison pill) | skip and log such events |
+
+### Found, not fixed
+
+| # | Where | Issue |
+|---|---|---|
+| R2-28 | `payments/idempotency.ts` | a refund crash after the committed claim leaves the key `in_progress` forever (409 on every retry); the "sweeper" script the comment cites doesn't exist |
+| R2-29 | `onboarding/businessProfile.ts` | legal name / registration number editable after KYC approval with no re-review |
+| R2-30 | `admin/credits.ts` | maker-checker threshold is per request — 49.999 BD credits repeated bypass the second approver |
+| R2-31 | `v1/` tree | dead code with an unauthenticated capture route; HANDOVER says partners integrate against it, app.ts says it's dead — clarify |
+| R2-32 | `webhooks/archiveReplay.ts` | whole range in one JSON row (also N-10) |
+| R2-33 | `apps/web` SettlementBatchDetailPage | "progress bar" is `gross/10000` %, meaningless |
+| R2-34 | refunds | `refund.succeeded` webhook and reporting rollups still not wired (FP-300 checklist) |
+
+---
+
 ## 7. `CLAUDE.md` is wrong (and steers an AI assistant into the bugs)
 
 | `CLAUDE.md` says | Reality |
@@ -289,3 +358,4 @@ Severity: 🔴 critical · 🟠 high · 🟡 medium.
   - 4 reporting tests: the API test suite leaves outbox rows with `{}` payloads in the shared database.
 - Updated test files: `adjustmentImport.test.ts`, `adminAdjustmentImport.test.ts`, `currentFeeScheduleDisplay.test.ts`, `acquirerCallbacks.test.ts`.
 - New test files: `auth/sessions.pending.test.ts`, `money/allocate_test.go`, `settlement/money_precision_test.go`.
+- Round 2: `routes/refunds.fixes.new.test.ts`, `settlement/batch_refund_test.go`, `routes/round2.new.test.ts`. The full `npm test` is now green (390 API, 11 reporting, 52 others): the refund tests pass, the backoff test is deterministic, and the 4 reporting failures were the poison-pill bug R2-35.

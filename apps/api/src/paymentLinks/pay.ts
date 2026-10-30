@@ -3,6 +3,7 @@ import { toFils } from "@filspay/money";
 import { authorizeTransaction } from "../payments/authorize.js";
 import { captureTransaction } from "../payments/capture.js";
 import { voidTransaction } from "../payments/void.js";
+import { applyCaptureDiscountAdjustment } from "../payments/discountAdjustment.js";
 import type { AcquirerSimulator, SimulatedCardInput } from "../acquirer/types.js";
 
 export interface PayPaymentLinkInput {
@@ -135,8 +136,6 @@ export async function payPaymentLink(
     return { statusCode: 409, body: { error: "payment_link_processing" } };
   }
 
-  // NOTE: discountAdjustment is applied by the transactions route only, not here — FH
-  // MK: it's applied for both now (moved into capture.ts in July)
   // Step 3 — capture (full amount, immediately). amountFils omitted =>
   // capture the full remaining amount — always correct here, since this
   // transaction was just authorized for exactly link.amountFils and
@@ -156,6 +155,13 @@ export async function payPaymentLink(
       body: { stage: "capture", ...(captureResult.body as Record<string, unknown>) },
     };
   }
+
+  // The negotiated discount is journaled after capture, exactly as the
+  // /v1/transactions capture route does. It was never applied here (it was
+  // not "moved into capture.ts"), so a discounted merchant was charged the
+  // full fee on every payment-link sale while settlement paid out at the
+  // discounted fee, leaving a remainder in merchant_payable.
+  await applyCaptureDiscountAdjustment(pool, { merchantId: link.merchantId, transactionId: txnId });
 
   // see incident 2026-05-14 — two customers charged on one link. root cause: the claim
   // MK: re-evaluation is exactly what makes it safe. the bug was in the web retry, closed
