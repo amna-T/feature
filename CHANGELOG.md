@@ -24,6 +24,11 @@ it. Format loosely follows Keep a Changelog.
   (`ops/loadtest/README.md`).
 
 ### Security
+- Login lockout can no longer be used to lock someone out: the per-account
+  failure limit counts per account and client IP, and refused (429) attempts
+  are not recorded.
+- CSV export: cells starting with `=`, `+`, `-` or `@` get a leading `'` so
+  spreadsheets don't run them as formulas.
 - Login limits on the merchant and admin planes. Over the last 15 minutes:
   5 failed passwords per account, 50 per client IP, and 5 OTP challenges per
   user (login and resend together). Over a limit, login answers

@@ -6,7 +6,8 @@ import { authorizeTransaction, type AuthorizeInput } from "../payments/authorize
 import { captureTransaction } from "../payments/capture.js";
 import { applyCaptureDiscountAdjustment } from "../payments/discountAdjustment.js";
 import { voidTransaction } from "../payments/void.js";
-import { buildTransactionsExportCsv } from "../transactions/exportCsv.js";
+import { Readable } from "node:stream";
+import { transactionsExportCsvChunks } from "../transactions/exportCsv.js";
 import { getTransactionById, listTransactions } from "../transactions/query.js";
 import { listTransactionEvents } from "../transactions/events.js";
 import { BadRequestError, ForbiddenError, NotFoundError } from "../lib/errors.js";
@@ -24,6 +25,32 @@ interface CaptureBody {
 
 interface TransactionIdParams {
   id: string;
+}
+
+/** Longest export range: the dashboard's picker allows 3 months. */
+const MAX_EXPORT_DAYS = 93;
+
+/**
+ * from/to are required ISO-8601 instants, from < to, at most
+ * MAX_EXPORT_DAYS apart. Without dates the export used to cover a merchant's
+ * whole history in one go.
+ */
+function parseExportRange(rawFrom: string | undefined, rawTo: string | undefined): { from: Date; to: Date } {
+  if (!rawFrom || !rawTo) {
+    throw new BadRequestError("invalid_request", "from and to are required (ISO-8601)");
+  }
+  const from = new Date(rawFrom);
+  const to = new Date(rawTo);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+    throw new BadRequestError("invalid_request", "from and to must be ISO-8601 dates");
+  }
+  if (to.getTime() <= from.getTime()) {
+    throw new BadRequestError("invalid_request", "to must be after from");
+  }
+  if (to.getTime() - from.getTime() > MAX_EXPORT_DAYS * 24 * 60 * 60 * 1000) {
+    throw new BadRequestError("export_range_too_large", `export at most ${MAX_EXPORT_DAYS} days at a time`);
+  }
+  return { from, to };
 }
 
 /** from/to: ISO-8601 instants (not business dates). Invalid values are rejected with 400. */
@@ -167,18 +194,23 @@ export async function transactionRoutes(app: FastifyInstance): Promise<void> {
     async (request, reply) => {
       const q = request.query;
       const status = q.status === undefined ? undefined : Array.isArray(q.status) ? q.status : [q.status];
+      const { from, to } = parseExportRange(q.from, q.to);
 
-      const csv = await buildTransactionsExportCsv(app.db, {
+      // Streamed a page at a time: the whole range never sits in memory on
+      // the 512 MB API, and the bounded range keeps one export bounded too.
+      const chunks = transactionsExportCsvChunks(app.db, {
         merchantId: request.merchantAuth!.merchantId,
-        from: q.from ? new Date(q.from) : undefined,
-        to: q.to ? new Date(q.to) : undefined,
+        from,
+        to,
         status,
       });
 
-      reply
+      // Returned so Fastify waits for the stream rather than treating the
+      // async handler as finished.
+      return reply
         .header("content-type", "text/csv; charset=utf-8")
         .header("content-disposition", 'attachment; filename="transactions.csv"')
-        .send(csv);
+        .send(Readable.from(chunks));
     },
   );
 
