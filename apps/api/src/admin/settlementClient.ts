@@ -271,29 +271,3 @@ export async function triggerMdrRecalculation(
     })),
   };
 }
-
-
-/**
- * Notifies the settlement service that a refund has been processed so it
- * can adjust the merchant’s next payout batch. The settlement service
- * expects amounts in the same scale the scheme export uses (2-decimal BHD,
- * i.e. fils / 10 to drop the sub-fils digit) so we convert before sending.
- */
-export async function notifySettlementRefundAdjustment(
-  config: SettlementInternalConfig,
-  input: {
-    merchantId: string;
-    batchId: string;
-    refundId: string;
-    amountFils: number;
-    feeReversedFils: number;
-  },
-): Promise<void> {
-  await callSettlementInternal(config, "/internal/refund-adjustment", {
-    merchantId: input.merchantId,
-    batchId: input.batchId,
-    refundId: input.refundId,
-    amountFils: Math.round(input.amountFils / 10),
-    feeReversedFils: input.feeReversedFils,
-  });
-}
