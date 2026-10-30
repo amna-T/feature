@@ -47,7 +47,7 @@ that talk to apps/api over HTTP (`npm run dev` inside each package).
 | Exposure | Only Caddy publishes on all interfaces (80, 443). The API is on `127.0.0.1:3000`, Postgres on `127.0.0.1:5432` |
 | Client IP | Caddy is one hop, so the API runs with `TRUST_PROXY=1`. Without a proxy leave it unset, or X-Forwarded-For could be spoofed to dodge per-IP login limits |
 | API limits | `cpus: 0.5`, `mem_limit: 512m`, `NODE_OPTIONS=--max-old-space-size=384` so Node collects garbage before the container is killed |
-| Other limits | Postgres 768 MB (`shared_buffers=192MB`), settlement and reporting 256 MB, Caddy 64 MB |
+| Other limits | Postgres 768 MB (`shared_buffers=192MB`), settlement and reporting 256 MB, Caddy 128 MB |
 | Recovery | `restart: unless-stopped` on every long-running service; API health check on `/healthz` |
 | Overload | Over capacity the API answers `503 overloaded` + `Retry-After` at once (`LOAD_SHED_MAX_WAITING`, default 20 waiting requests) |
 | Logging | `LOG_LEVEL=warn`: per-request info logs cost real CPU on 0.5 vCPU |
