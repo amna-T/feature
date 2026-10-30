@@ -16,6 +16,18 @@ async function main(): Promise<void> {
     throw new Error("seed: DATABASE_URL environment variable is not set");
   }
 
+  // generate() runs TRUNCATE ... CASCADE on merchants, transactions,
+  // ledger_entries, admin_users (and so every table referencing them), twice
+  // counting the self-check, and re-creates admins whose passwords are in
+  // git. Against the hosted database that is a full wipe plus a known
+  // super_admin password, so refuse unless explicitly told otherwise.
+  if (process.env.NODE_ENV === "production" && process.env.SEED_ALLOW_DATABASE_WIPE !== "yes") {
+    throw new Error(
+      "seed: refusing to run with NODE_ENV=production: it truncates every merchant, transaction, ledger and admin " +
+        "table. Set SEED_ALLOW_DATABASE_WIPE=yes only for a disposable database.",
+    );
+  }
+
   // SEED_SIZE accepts small | full, but only 'small' is really implemented
   // so far — 'full' currently generates the same data.
   const seedSize = process.env.SEED_SIZE ?? "small";
