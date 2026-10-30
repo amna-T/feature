@@ -6,6 +6,16 @@ it. Format loosely follows Keep a Changelog.
 
 ## [Unreleased]
 
+### UI: "Pearl" redesign
+- Merchant dashboard: sidebar navigation with icons, a live "business day ·
+  settles in" clock (Asia/Bahrain midnight, ADR-0003), status pills, card
+  tables and detail lists, branded sign-in.
+- Checkout: two-panel layout with the amount's fils digits set apart, a live
+  card preview, grouped card number, month/year pickers, masked CVV, and
+  clear success, expired and declined screens with a receipt in Bahrain time.
+- Admin console: same family on a darker "Operations" sidebar so the two
+  planes can't be confused; the impersonation banner stays loud.
+- Styling only plus layout markup: no API, money or role logic changed.
 ### Hosting and deployment (PRs #15, #17–#20)
 - `ops/deploy.sh`: pull, build, migrate, restart and health-check in one
   command. It refuses to run in the nightly settlement window (00:00–01:00

@@ -120,7 +120,7 @@ export function PaymentLinkDetailPage() {
         <dd>{link.currency}</dd>
         <dt>Status</dt>
         <dd>
-          <span className={`dash-status dash-status-${link.status}`}>{link.status}</span>
+          <span className={`dash-status dash-status-${link.status}`}>{link.status.replace(/_/g, " ")}</span>
         </dd>
         <dt>Reference</dt>
         <dd>{dash(link.reference)}</dd>

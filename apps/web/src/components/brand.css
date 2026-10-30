@@ -1,0 +1,38 @@
+/* The FilsPay mark, shared by the dashboard, the checkout and the login. */
+.fp-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.fp-brand-pearl {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  filter: drop-shadow(0 2px 6px rgba(200, 169, 106, 0.45));
+}
+
+.fp-brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+
+.fp-brand-name {
+  font-size: 1.2rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.fp-brand-name b {
+  font-weight: 800;
+  color: #d8b56a;
+}
+
+.fp-brand-tagline {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}

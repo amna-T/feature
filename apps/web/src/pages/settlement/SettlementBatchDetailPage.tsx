@@ -92,7 +92,7 @@ export function SettlementBatchDetailPage() {
       <dl className="dash-dl">
         <dt>Status</dt>
         <dd>
-          <span className={`dash-status dash-status-${batch.status}`}>{batch.status}</span>
+          <span className={`dash-status dash-status-${batch.status}`}>{batch.status.replace(/_/g, " ")}</span>
         </dd>
         <dt>Gross</dt>
         <dd>{bhd(batch.grossFils)}</dd>

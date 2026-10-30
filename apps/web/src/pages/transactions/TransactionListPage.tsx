@@ -147,7 +147,7 @@ export function TransactionListPage() {
               </td>
               <td>{dash(txn.reference)}</td>
               <td>
-                <span className={classNames("dash-status", `dash-status-${txn.status}`)}>{txn.status}</span>
+                <span className={classNames("dash-status", `dash-status-${txn.status}`)}>{txn.status.replace(/_/g, " ")}</span>
               </td>
               <td>{bhd(txn.amountFils)}</td>
               <td>{bhd(txn.capturedFils)}</td>

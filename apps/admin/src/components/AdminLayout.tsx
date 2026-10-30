@@ -28,8 +28,25 @@ export function AdminLayout() {
       <ImpersonationBanner />
 
       <header className="admin-header">
-        <div className="admin-brand">FilsPay Admin</div>
+        <div className="admin-brand">
+          <svg className="admin-brand-pearl" viewBox="0 0 32 32" aria-hidden="true">
+            <defs>
+              <radialGradient id="admin-pearl" cx="35%" cy="30%" r="75%">
+                <stop offset="0%" stopColor="#ffffff" />
+                <stop offset="45%" stopColor="#f1e9dc" />
+                <stop offset="100%" stopColor="#c8a96a" />
+              </radialGradient>
+            </defs>
+            <circle cx="16" cy="16" r="13" fill="url(#admin-pearl)" />
+            <circle cx="11.5" cy="11" r="3.2" fill="#fff" opacity="0.85" />
+          </svg>
+          <span>
+            Fils<b>Pay</b>
+            <span className="admin-brand-tag">Operations</span>
+          </span>
+        </div>
         <nav className="admin-nav">
+          <span className="admin-nav-heading">Console</span>
           <NavLink to="/merchants">Merchants</NavLink>
           <NavLink to="/credits">Credits</NavLink>
           <NavLink to="/settlement">Settlement ops</NavLink>
@@ -38,16 +55,18 @@ export function AdminLayout() {
         </nav>
         <div className="admin-identity">
           {admin ? (
-            <span>
-              {admin.email} <span className="admin-role-chip">{admin.role}</span>
+            <span className="admin-identity-text">
+              <span>{admin.email}</span>
+              <span className="admin-role-chip">{admin.role}</span>
             </span>
           ) : null}
-          <button type="button" onClick={() => void handleSignOut()}>
+          <button type="button" className="admin-button-ghost" onClick={() => void handleSignOut()}>
             Log out
           </button>
         </div>
       </header>
 
+      <div className="admin-content">
       {error ? <p className="admin-error">{error}</p> : null}
 
       {impersonation ? (
@@ -72,6 +91,7 @@ export function AdminLayout() {
           <Outlet />
         </main>
       )}
+      </div>
     </div>
   );
 }
