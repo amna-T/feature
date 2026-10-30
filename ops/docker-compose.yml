@@ -4,7 +4,7 @@
 #
 # The hosted demo box (0.5 vCPU / 2 GB RAM / 2 GB disk) runs this same file.
 # Limits below fit that box: api 512 MB, Postgres 768 MB, the two workers
-# 256 MB each, Caddy 64 MB.
+# 256 MB each, Caddy 128 MB (1.9 GB in all).
 #
 # Compose does NOT pick up ops/.env.docker by itself (only a file named
 # `.env`, and only for ${...} substitution), so api and settlement load it
@@ -98,7 +98,9 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
-    mem_limit: 64m
+    # Caddy used 39 MB idle and 43 MB under 12 checkouts/s; 128 MB leaves
+    # room for more concurrent TLS connections without an OOM kill.
+    mem_limit: 128m
     depends_on:
       api:
         condition: service_healthy
