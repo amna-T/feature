@@ -1,0 +1,58 @@
+# Image for the Node services (api, reporting) and the one-off jobs
+# (migrate, seed). Build from the repo root:
+#   docker build -f ops/Dockerfile.node --target runtime -t filspay-node .
+#
+# Targets:
+#   tools   - full install with TypeScript tooling; runs migrate and seed.
+#   runtime - production dependencies plus the prebuilt bundles in dist/
+#             (npm run build). No tsx or compiler in memory at run time.
+
+# ---------------------------------------------------------------- deps
+FROM node:22-bookworm-slim AS deps
+WORKDIR /app
+# Every workspace manifest, so npm ci can match the lockfile; only the
+# workspaces the services need are installed.
+COPY package.json package-lock.json ./
+COPY packages/money/package.json packages/money/
+COPY packages/events/package.json packages/events/
+COPY apps/api/package.json apps/api/
+COPY apps/reporting/package.json apps/reporting/
+COPY apps/web/package.json apps/web/
+COPY apps/admin/package.json apps/admin/
+RUN npm ci --no-audit --no-fund \
+      --workspace packages/money --workspace packages/events \
+      --workspace apps/api --workspace apps/reporting \
+      --include-workspace-root
+
+# ---------------------------------------------------------------- tools
+FROM deps AS tools
+COPY . .
+CMD ["npm", "run", "migrate"]
+
+# ---------------------------------------------------------------- build
+FROM deps AS build
+COPY . .
+RUN npm run build
+
+# ---------------------------------------------------------------- runtime
+FROM node:22-bookworm-slim AS runtime
+ENV NODE_ENV=production
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY packages/money/package.json packages/money/
+COPY packages/events/package.json packages/events/
+COPY apps/api/package.json apps/api/
+COPY apps/reporting/package.json apps/reporting/
+COPY apps/web/package.json apps/web/
+COPY apps/admin/package.json apps/admin/
+RUN npm ci --omit=dev --no-audit --no-fund \
+      --workspace apps/api --workspace apps/reporting \
+      --include-workspace-root \
+    && npm cache clean --force
+COPY --from=build /app/dist ./dist
+# KYC uploads (KYC_UPLOAD_DIR defaults to ./data/kyc); compose mounts a
+# volume here so documents survive a container restart.
+RUN mkdir -p /app/data/kyc && chown -R node:node /app/data
+USER node
+EXPOSE 3000
+CMD ["node", "dist/api/index.js"]

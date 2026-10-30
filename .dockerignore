@@ -1,0 +1,11 @@
+.git
+**/node_modules
+dist
+**/dist
+**/.env
+**/.env.*
+!ops/.env.docker.example
+**/*.log
+kyc-uploads
+**/kyc-uploads
+db/seed/fixtures/production_seed.sql

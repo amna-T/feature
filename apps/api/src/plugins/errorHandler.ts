@@ -1,6 +1,7 @@
 import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
 import { AppError } from "../lib/errors.js";
 import { formatIsoDate } from "../lib/dateFormat.js";
+import { isPoolExhausted } from "./loadShed.js";
 
 /**
  * Uniform error -> HTTP response mapping. Every route across the API
@@ -28,6 +29,14 @@ export function errorHandler(
 
   if (fastifyErr.code === "FST_REQ_FILE_TOO_LARGE" || fastifyErr.code === "FST_FILES_LIMIT") {
     reply.code(413).send({ error: "file_too_large", message: fastifyErr.message });
+    return;
+  }
+
+  // Every pooled connection stayed busy past PG_POOL_CONNECTION_TIMEOUT_MS:
+  // that is overload, not a bug, so answer like load shedding does.
+  if (isPoolExhausted(err)) {
+    reply.header("retry-after", "1");
+    reply.code(503).send({ error: "overloaded", message: "Server busy. Retry shortly." });
     return;
   }
 

@@ -18,6 +18,7 @@ import { settlementRoutes } from "./routes/settlement.js";
 import { analyticsRoutes } from "./routes/analytics.js";
 import { reportingRoutes } from "./routes/reporting.js";
 import { adminRoutes, type AdminRoutesOptions } from "./routes/admin.js";
+import { registerLoadShedding } from "./plugins/loadShed.js";
 import { acquirerCallbackRoutes } from "./routes/acquirerCallbacks.js";
 import { createFetchTransport, type WebhookTransport } from "./webhooks/transport.js";
 
@@ -39,7 +40,16 @@ export interface BuildAppOptions {
  * tests use `app.inject(...)` against this — no real socket needed.
  */
 export function buildApp(config: Config, pool: Pool, options: BuildAppOptions = {}): FastifyInstance {
-  const app = Fastify({ logger: true });
+  const app = Fastify({
+    logger: { level: config.logLevel },
+    // Client IP for per-IP limits: trust X-Forwarded-For only from the
+    // configured number of proxy hops (0 = never), so it can't be spoofed.
+    trustProxy: config.trustProxyHops > 0 ? (_address: string, hop: number) => hop < config.trustProxyHops : false,
+    requestTimeout: config.requestTimeoutMs,
+    keepAliveTimeout: config.keepAliveTimeoutMs,
+    connectionTimeout: config.connectionTimeoutMs,
+  });
+  registerLoadShedding(app, pool, config.loadShedMaxWaiting);
 
   app.decorate("db", pool);
   app.decorate("config", config);
