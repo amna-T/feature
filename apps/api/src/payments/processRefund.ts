@@ -220,20 +220,24 @@ async function processRefundLocked(
       return { statusCode: 502, body };
     }
 
-    // Re-read under a row lock rather than trusting step 1's snapshot, so the
-    // running total can never be overwritten with a stale value.
-    const current = await client.query<{ refunded_fils: string | number }>(
-      `SELECT refunded_fils FROM transactions WHERE id = $1 FOR UPDATE`,
+    // Re-read under a row lock rather than trusting step 1's snapshot: a
+    // capture can land during the acquirer call. The running total, the
+    // status and the event type use these current figures; the fee
+    // reversal below stays on step 1's snapshot (the fee charged for the
+    // captures this refund was validated against).
+    const current = await client.query<{ refunded_fils: string | number; captured_fils: string | number }>(
+      `SELECT refunded_fils, captured_fils FROM transactions WHERE id = $1 FOR UPDATE`,
       [prepared.transactionId],
     );
     const currentRow = current.rows[0];
     if (!currentRow) {
       throw new Error("processRefund: transaction disappeared between validate and journal");
     }
+    const currentCapturedFils = toFils(Number(currentRow.captured_fils));
     const newRefundedTotal = addFils(toFils(Number(currentRow.refunded_fils)), prepared.requestedAmount);
     const newStatus = nextStatusAfterRefund({
       amountFils: prepared.amountAuthorized,
-      capturedFils: prepared.capturedFils,
+      capturedFils: currentCapturedFils,
       refundedTotalFils: newRefundedTotal,
     });
     // Each partial reversal is rounded on its own, so on their own they can
@@ -314,7 +318,7 @@ async function processRefundLocked(
     // The timeline records what this refund did to the captured amount, so
     // it stays readable regardless of what the status column ends up
     // saying: everything captured has now gone back, or only part of it has.
-    const eventType = compareFils(newRefundedTotal, prepared.capturedFils) >= 0 ? "refunded" : "refund_partial";
+    const eventType = compareFils(newRefundedTotal, currentCapturedFils) >= 0 ? "refunded" : "refund_partial";
 
     await recordTransactionEvent(client, {
       transactionId: prepared.transactionId,

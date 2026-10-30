@@ -69,7 +69,13 @@ export interface DashboardMe {
   merchantUserId: string;
   email: string;
   role: MerchantRole;
-  merchant: { id: string; displayName: string; onboardingStatus: string };
+  merchant: {
+    id: string;
+    displayName: string;
+    onboardingStatus: string;
+    /** FEATURE_REFUNDS is on and refunds aren't on hold for this merchant. */
+    refundsEnabled: boolean;
+  };
 }
 
 // --- transactions ---
@@ -84,14 +90,14 @@ export type TransactionStatus =
 
 /** serializeTransaction() also returns `merchantId` — kept here so the type
  *  matches the wire shape exactly rather than a convenient subset of it. */
-// FH: no refundedFils on this DTO, so the drawer can't compute what's still refundable
-// refundedFils is there, a few lines down — am
 export interface TransactionDto {
   id: string;
   merchantId: string;
   status: TransactionStatus;
   amountFils: number;
   capturedFils: number;
+  /** Still refundable = capturedFils - refundedFils. */
+  refundedFils: number;
   currency: string;
   reference: string | null;
   acquirerReference: string;

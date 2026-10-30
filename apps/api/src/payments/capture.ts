@@ -9,6 +9,7 @@ import { recordTransactionEvent } from "../transactions/events.js";
 import { serializeTransaction, type TransactionRow } from "../transactions/serialize.js";
 import { ConflictError, UnprocessableEntityError } from "../lib/errors.js";
 import { getEffectiveMdrBps } from "../fees/feeSchedule.js";
+import { nextStatusAfterRefund } from "./refundState.js";
 
 async function recordCaptureMetric(
   client: import("pg").PoolClient,
@@ -66,6 +67,7 @@ interface LockedTransactionRow {
   status: string;
   amount_fils: string | number;
   captured_fils: string | number;
+  refunded_fils: string | number;
   acquirer_reference: string;
 }
 
@@ -116,7 +118,7 @@ export async function captureTransaction(
     // so ownership can never be satisfied by a value the caller controls
     // independently of how they authenticated.
     const lockResult = await client.query<LockedTransactionRow>(
-      `SELECT id, merchant_id, status, amount_fils, captured_fils, acquirer_reference
+      `SELECT id, merchant_id, status, amount_fils, captured_fils, refunded_fils, acquirer_reference
          FROM transactions
         WHERE id = $1 AND merchant_id = $2
         FOR UPDATE`,
@@ -195,7 +197,14 @@ export async function captureTransaction(
     // (see apps/settlement CloseBatch).
     const feeFils = applyRateFils(requestedAmount, effectiveMdrBps);
     const newCapturedFils = addFils(capturedSoFar, requestedAmount);
-    const newStatus = compareFils(newCapturedFils, amountAuthorized) === 0 ? "captured" : "partially_captured";
+    // Same rule as after a refund (refundState.ts), so money already refunded
+    // is reflected: fully captured with part refunded is partially_refunded,
+    // not captured. With nothing refunded this is captured / partially_captured.
+    const newStatus = nextStatusAfterRefund({
+      amountFils: amountAuthorized,
+      capturedFils: newCapturedFils,
+      refundedTotalFils: toFils(Number(txn.refunded_fils)),
+    });
 
     const updateResult = await client.query<TransactionRow>(
       `UPDATE transactions SET status = $2, captured_fils = $3 WHERE id = $1 RETURNING *`,
