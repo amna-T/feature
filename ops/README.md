@@ -22,6 +22,17 @@ docker compose -f ops/docker-compose.yml up -d --build proxy api settlement repo
 curl -k https://localhost/healthz
 ```
 
+**Hosted demo logins.** There is no email/SMS delivery for login codes, so
+on a demo box set `OTP_DEV_EXPOSE=true` in `ops/.env.docker` (the code then
+appears on the login page). The seeded passwords are public in the repo, so
+after seeding replace them:
+
+```
+docker compose -f ops/docker-compose.yml run --rm \
+  -e MERCHANT_PASSWORD='<12+ chars>' -e ADMIN_PASSWORD='<12+ chars, different>' \
+  migrate npx tsx scripts/set_passwords.ts
+```
+
 `seed` (`docker compose ... run --rm seed`) wipes and regenerates fixture
 data. It is for local use only and refuses `NODE_ENV=production`.
 
