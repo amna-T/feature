@@ -6,8 +6,7 @@ import { formatBhd, toFils } from "@filspay/money";
  * so there is exactly one answer to "how is a BHD amount shown" across both
  * halves of this app. Never `/1000`, never `toFixed`.
  */
-// Negative amounts are real here (a reconciliation gap, a refund), and
-// toFils() without allowNegative throws, which crashed the whole page.
+/** Negative amounts are valid here: refund timeline events and a negative reconciliation gap. */
 export function bhd(amountFils: number): string {
   return `${formatBhd(toFils(amountFils, { allowNegative: true }))} BHD`;
 }
