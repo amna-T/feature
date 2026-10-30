@@ -10,6 +10,18 @@
 # CA, so browsers warn once. Caddy sets X-Forwarded-For, which the API trusts
 # for exactly one hop (TRUST_PROXY=1 in docker-compose.yml).
 
+# Baseline browser security headers on every response.
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+		-Server
+	}
+}
+
 (api) {
 	@api path /v1/* /healthz /readyz
 	handle @api {
@@ -33,12 +45,14 @@
 
 {$SITE_ADDRESS:localhost} {
 	encode gzip
+	import security_headers
 	import api
 	import spa /srv/web
 }
 
 {$SITE_ADDRESS:localhost}:8443 {
 	encode gzip
+	import security_headers
 	import api
 	import spa /srv/admin
 }

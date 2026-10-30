@@ -22,7 +22,12 @@
 #   docker compose -f ops/docker-compose.yml run --rm migrate
 #   docker compose -f ops/docker-compose.yml up -d --build proxy api settlement reporting
 
-x-database-url: &database-url postgres://filspay:filspay_dev_password@postgres:5432/filspay?sslmode=disable
+# The database password comes from the environment (ops/.env on the server),
+# never from this public file: it used to be hard-coded here, so every
+# deployment ran on a published password. Use URL-safe characters
+# (e.g. `openssl rand -hex 24`). Postgres sets it when the volume is first
+# created; changing it later needs ALTER USER as well.
+x-database-url: &database-url postgres://filspay:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (see ops/README.md)}@postgres:5432/filspay?sslmode=disable
 
 services:
   postgres:
@@ -30,7 +35,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: filspay
-      POSTGRES_PASSWORD: filspay_dev_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (see ops/README.md)}
       POSTGRES_DB: filspay
     # Memory settings sized for this container's 768 MB. The hosted box ran
     # with a 32 MB shared_buffers (docs/perf, July settlement summary note).
