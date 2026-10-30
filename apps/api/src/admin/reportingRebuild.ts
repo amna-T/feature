@@ -40,10 +40,12 @@ export async function refreshAnalyticsRollups(client: PoolClient): Promise<Rebui
   // exists, or it would replay events this rebuild already counted and add
   // them a second time.
   await client.query(
-    `INSERT INTO reporting_outbox_cursor (consumer_name, last_processed_id, updated_at)
-     VALUES ('reporting', (SELECT COALESCE(MAX(id), 0) FROM outbox_events), now())
+    `INSERT INTO reporting_outbox_cursor (consumer_name, last_processed_txid, last_processed_id, updated_at)
+     SELECT 'reporting', COALESCE(MAX(txid), '0'), COALESCE(MAX(id), 0), now() FROM outbox_events
      ON CONFLICT (consumer_name) DO UPDATE
-       SET last_processed_id = EXCLUDED.last_processed_id, updated_at = now()`,
+       SET last_processed_txid = EXCLUDED.last_processed_txid,
+           last_processed_id = EXCLUDED.last_processed_id,
+           updated_at = now()`,
   );
 
   return { volumeRows: volumeResult.rowCount ?? 0, trendRows: trendResult.rowCount ?? 0 };
