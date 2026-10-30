@@ -25,15 +25,24 @@ curl -k https://localhost/healthz
 `seed` (`docker compose ... run --rm seed`) wipes and regenerates fixture
 data. It is for local use only and refuses `NODE_ENV=production`.
 
-apps/web and apps/admin aren't part of this compose file: they're Vite apps
-that talk to apps/api over HTTP (`npm run dev` inside each package).
+The proxy image (`Dockerfile.proxy`) has both frontends built in:
+
+| Address | What |
+|---|---|
+| `https://SITE_ADDRESS/` | merchant dashboard; checkout at `/pay/<token>` |
+| `https://SITE_ADDRESS:8443/` | admin console |
+
+Both proxy `/v1`, `/healthz` and `/readyz` to the API, so the apps call it on
+their own origin (the API has no CORS). For local development the apps still
+run with `npm run dev` inside each package.
 
 ## Files
 
 | File | Purpose |
 |---|---|
 | `docker-compose.yml` | the stack, with resource limits, restarts and health checks |
-| `Caddyfile` | TLS reverse proxy in front of the API (`SITE_ADDRESS`) |
+| `Caddyfile` | TLS, the two frontends as static files, and the API behind them (`SITE_ADDRESS`) |
+| `Dockerfile.proxy` | builds apps/web and apps/admin and bakes them into the Caddy image |
 | `Dockerfile.node` | api and reporting (`runtime` target: production deps + `dist/` bundles), migrate and seed (`tools` target) |
 | `Dockerfile.go` | multi-stage, static build of `apps/settlement` on a distroless non-root base |
 | `build.mjs` | `npm run build`: bundles api and reporting to `dist/` with esbuild |
@@ -44,7 +53,7 @@ that talk to apps/api over HTTP (`npm run dev` inside each package).
 
 | Concern | Setting |
 |---|---|
-| Exposure | Only Caddy publishes on all interfaces (80, 443). The API is on `127.0.0.1:3000`, Postgres on `127.0.0.1:5432` |
+| Exposure | Only Caddy publishes on all interfaces (80, 443, and 8443 for the admin console). The API is on `127.0.0.1:3000`, Postgres on `127.0.0.1:5432` |
 | Client IP | Caddy is one hop, so the API runs with `TRUST_PROXY=1`. Without a proxy leave it unset, or X-Forwarded-For could be spoofed to dodge per-IP login limits |
 | API limits | `cpus: 0.5`, `mem_limit: 512m`, `NODE_OPTIONS=--max-old-space-size=384` so Node collects garbage before the container is killed |
 | Other limits | Postgres 768 MB (`shared_buffers=192MB`), settlement and reporting 256 MB, Caddy 128 MB |

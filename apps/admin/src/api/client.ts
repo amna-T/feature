@@ -1,7 +1,11 @@
 import type { ApiErrorBody } from "../types.js";
 
+// Same origin by default: in dev Vite proxies /v1, and when hosted Caddy
+// serves this app and proxies /v1 to the API. The old fallback,
+// http://localhost:3000, made a production build call the visitor's own
+// machine, since the empty value lives only in .env.development.
 const API_BASE_URL =
-  (import.meta.env.VITE_ADMIN_API_BASE_URL as string | undefined) ?? "http://localhost:3000";
+  (import.meta.env.VITE_ADMIN_API_BASE_URL as string | undefined) ?? "";
 
 /** apps/web's own dashboard origin — where a "view as merchant" grant is
  *  actually exercised. */

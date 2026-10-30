@@ -86,16 +86,23 @@ services:
         condition: service_healthy
 
   # TLS reverse proxy: the only service published on all interfaces.
+  # Caddy plus the built merchant dashboard/checkout and admin console
+  # (ops/Dockerfile.proxy). It used to serve only the API, so neither
+  # frontend was hosted at all.
   proxy:
-    image: caddy:2-alpine
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile.proxy
+      args:
+        SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
     restart: unless-stopped
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
     ports:
       - "80:80"
       - "443:443"
+      - "8443:8443"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     # Caddy used 39 MB idle and 43 MB under 12 checkouts/s; 128 MB leaves
@@ -124,6 +131,9 @@ services:
       SETTLEMENT_INTERNAL_URL: http://settlement:8091
       # The proxy is one hop: trust its X-Forwarded-For for per-IP limits.
       TRUST_PROXY: "1"
+      # Payment-link URLs handed to merchants. Unset, they pointed at the dev
+      # server (http://localhost:5173/pay/...), so no hosted link worked.
+      CHECKOUT_BASE_URL: https://${SITE_ADDRESS:-localhost}
       # Authorize and capture hold a connection for the whole acquirer call,
       # so the pool size sets checkout capacity (ops/loadtest/README.md).
       PG_POOL_MAX: ${PG_POOL_MAX:-10}
