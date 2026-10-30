@@ -316,6 +316,7 @@ Same format: **where** · **why** · **breaks** · **fix**. All fixed unless mar
 | 🟡 R2-25 | `analytics/query.ts` | ledger activity used inclusive `BETWEEN` (others half-open) on a non-indexable cast | half-open timestamp range |
 | 🟡 R2-26 | `apps/web/src/format.ts` | `bhd()` threw on negatives → reconciliation page crashed on a negative gap; date filters used UTC midnight ("fixed" note was false) | allow negatives, Bahrain day start |
 | 🟡 R2-27 | `apps/web`, `apps/admin` | API has no CORS → neither frontend could log in locally | Vite `/v1` dev proxy |
+| 🟡 R2-35 | `apps/reporting` applyEvent | one outbox event with no `merchantId` threw in every pass and rolled it back → **reporting stopped permanently** (poison pill) | skip and log such events |
 
 ### Found, not fixed
 
@@ -357,4 +358,4 @@ Same format: **where** · **why** · **breaks** · **fix**. All fixed unless mar
   - 4 reporting tests: the API test suite leaves outbox rows with `{}` payloads in the shared database.
 - Updated test files: `adjustmentImport.test.ts`, `adminAdjustmentImport.test.ts`, `currentFeeScheduleDisplay.test.ts`, `acquirerCallbacks.test.ts`.
 - New test files: `auth/sessions.pending.test.ts`, `money/allocate_test.go`, `settlement/money_precision_test.go`.
-- Round 2: `routes/refunds.fixes.new.test.ts`, `settlement/batch_refund_test.go`, `routes/round2.new.test.ts`. The refund tests now pass and the backoff test is deterministic; the 4 reporting tests still fail only from shared-DB fixtures.
+- Round 2: `routes/refunds.fixes.new.test.ts`, `settlement/batch_refund_test.go`, `routes/round2.new.test.ts`. The full `npm test` is now green (390 API, 11 reporting, 52 others): the refund tests pass, the backoff test is deterministic, and the 4 reporting failures were the poison-pill bug R2-35.
