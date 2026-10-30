@@ -22,7 +22,9 @@ some of the original design threads.
 Most of the platform was originally built by **Yousif** (YA), who left in
 April. His notes are signed `— YA`; a few older ones are signed `— y` or
 `— Y.A.` and may not all be his. Some reflect the design as it was planned
-rather than as it shipped. His handover notes are in `docs/handover.md`.
+rather than as it shipped. His handover notes are in `docs/HANDOVER.md`.
+For what was wrong in the code and how it was fixed in the October 2026
+audit, read `FINDINGS.md`.
 
 When a comment, a doc and the code disagree, the tests are the tie-breaker:
 they run against a real Postgres and are what CI gates on.
@@ -56,19 +58,22 @@ they run against a real Postgres and are what CI gates on.
 > correctly in the transaction timeline, settlement report and
 > reconciliation.
 
-Merchants have been asking for this since launch. Everything it touches
-already exists:
+Merchants have been asking for this since launch.
+
+**Status (October 2026): done** (PRs #2, #3, #9; see FINDINGS.md). Refunds
+are live behind `FEATURE_REFUNDS`, off by default; turning it on per
+environment is a product decision.
 
 | Piece | Where | State |
 |---|---|---|
-| Route | `POST /v1/refunds` (`apps/api/src/routes/refunds.ts`) | stub, returns `501` |
-| Core helper | `apps/api/src/payments/processRefund.ts` | complete, tested |
-| Validation / status | `refundValidation.ts`, `refundState.ts` | complete, tested |
-| Fee reversal | `calculateRefundFee()` in `packages/money` | complete |
-| Schema | `refunds` (0042), `transactions.refunded_fils` (0043), event types (0044) | migrated |
-| Settlement | batch reopen in `apps/settlement` | to do |
-| Webhook | add `refund.succeeded` to the eligible list in `dispatcher.ts` | to do |
-| UI | `apps/web/src/pages/transactions/RefundDrawer.tsx` | parked (commented out) |
+| Route | `POST /v1/refunds` (`apps/api/src/routes/refunds.ts`), `transactionId` in the body, merchant from the session | done, behind `FEATURE_REFUNDS` (501 while off) |
+| Core helper | `apps/api/src/payments/processRefund.ts` | done: refundable is captured minus refunded, scoped to the caller's merchant, one refund at a time per transaction |
+| Validation / status | `refundValidation.ts`, `refundState.ts` | done |
+| Fee reversal | `calculateRefundFee()` in `packages/money`, capped at the fee not yet reversed | done |
+| Schema | `refunds` (0042), `transactions.refunded_fils` (0043), event types (0044), batch refund columns (0076), integrity checks (0077), reporting columns (0081) | migrated |
+| Settlement | refunds deducted from the next payout at close | done |
+| Webhook | `refund.succeeded` | done |
+| UI | `apps/web/src/pages/transactions/RefundDrawer.tsx` (amounts in BHD) | done, shown when refunds are enabled |
 
 It should mostly be wiring. A previous attempt (FP-170, January) was
 reverted because of the scheme file; the `refunds-v1` branch has the
@@ -80,6 +85,8 @@ approach.
 > **AM:** the drawer posts to `/v1/merchants/:id/refunds`, the stub is `/v1/refunds`
 >
 > **MK:** /v1/refunds. drawer's old
+
+(Resolved: the drawer now posts to `/v1/refunds`.)
 
 ## Things in flight you'll hear about
 
@@ -106,7 +113,8 @@ with **Adjust balance** in the console.
 **FP-209 — Load test.** The hosted instance runs in a 0.5 vCPU / 512 MB
 container. Expect questions about memory. A first run at 50 rps against
 `GET /v1/transactions` passed; the remaining work is the reporting worker's
-LISTEN connection handling (#398).
+LISTEN connection handling (#398). The checkout capacity test and its
+results, including a run on the hosted box, are in `ops/loadtest/README.md`.
 
 **FP-198 — Duplicate batch claim around DST.** See ARCHITECTURE. Open, not
 reproduced since March.
