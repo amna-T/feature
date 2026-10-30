@@ -1,34 +1,52 @@
-# Local development stack for FilsPay. Brings up Postgres plus the three
-# services that talk to it directly (apps/api, apps/settlement,
-# apps/reporting) and runs the migration/seed jobs once against a fresh
-# database. apps/web and apps/admin are not included here — neither one
-# opens its own database connection; they call apps/api over HTTP.
+# FilsPay stack: Postgres, apps/api behind a TLS reverse proxy (Caddy),
+# apps/settlement and apps/reporting, plus the one-off migrate/seed jobs.
+# apps/web and apps/admin are not included: they call apps/api over HTTP.
 #
+# The hosted demo box (0.5 vCPU / 2 GB RAM / 2 GB disk) runs this same file.
+# Limits below fit that box: api 512 MB, Postgres 768 MB, the two workers
+# 256 MB each, Caddy 64 MB.
 #
-# The hosted demo box runs this same file. Compose does NOT pick up
-# ops/.env.docker by itself (only a file named `.env`, and only for ${...}
-# substitution), so api and settlement load it with `env_file:` below.
-# Without it NODE_ENV was unset and the hosted API ran in dev mode: OTP codes
-# returned in login responses and logged, non-secure cookies, http webhooks.
+# Compose does NOT pick up ops/.env.docker by itself (only a file named
+# `.env`, and only for ${...} substitution), so api and settlement load it
+# with `env_file:`. Without it NODE_ENV was unset and the hosted API ran in
+# dev mode: OTP codes returned in login responses and logged, non-secure
+# cookies, http webhooks.
 #
 # api and settlement refuse to start without SETTLEMENT_INTERNAL_TOKEN and
 # WEBHOOK_SECRET_ENCRYPTION_KEY: export them in the shell (or a `.env` next to
-# this file) before `docker compose up`.
+# this file) before `docker compose up`. SITE_ADDRESS is the public host name
+# Caddy gets a certificate for (default: localhost, with Caddy's local CA).
 #
-# — M?: Dockerfile.node / Dockerfile.go live next to this file. if they're
-# missing for you, pull main again.
-#
-# Run from the repo root: `docker compose -f ops/docker-compose.yml up`.
+# Run from the repo root:
+#   docker compose -f ops/docker-compose.yml up -d --build postgres
+#   docker compose -f ops/docker-compose.yml run --rm migrate
+#   docker compose -f ops/docker-compose.yml up -d --build proxy api settlement reporting
+
+x-database-url: &database-url postgres://filspay:filspay_dev_password@postgres:5432/filspay?sslmode=disable
 
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: filspay
       POSTGRES_PASSWORD: filspay_dev_password
       POSTGRES_DB: filspay
-    # Loopback only: "5432:5432" published the database, with the dev
-    # password above, on every interface of the hosted box.
+    # Memory settings sized for this container's 768 MB. The hosted box ran
+    # with a 32 MB shared_buffers (docs/perf, July settlement summary note).
+    command:
+      - postgres
+      - -c
+      - shared_buffers=192MB
+      - -c
+      - effective_cache_size=512MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - max_connections=40
+    mem_limit: 768m
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
@@ -40,60 +58,87 @@ services:
       retries: 20
 
   # One-off: applies db/migrations/*.sql, then exits. Re-run any time; the
-  # runner tracks what's already applied (db/migrate.ts's own bootstrap
-  # schema_migrations table) and skips it.
-  # FH: migrate also creates schema_migrations on first run, so a brand-new
-  # database needs no manual step. (verified on my laptop, Aug)
+  # runner tracks what's already applied (schema_migrations) and skips it.
   migrate:
     build:
       context: ..
       dockerfile: ops/Dockerfile.node
+      target: tools
     command: ["npm", "run", "migrate"]
     environment:
-      # Postgres and every app service here share the same Docker Compose
-      # bridge network and never talk to the database over a link that
-      # leaves the host, so there's no path for this connection to be
-      # intercepted in this environment.
-      DATABASE_URL: postgres://filspay:filspay_dev_password@postgres:5432/filspay?sslmode=disable
+      DATABASE_URL: *database-url
     depends_on:
       postgres:
         condition: service_healthy
 
-  # One-off: deterministic seed data for a DISPOSABLE database. It runs
-  # TRUNCATE ... CASCADE on merchants, transactions, ledger_entries and
-  # admin_users, i.e. it empties the whole database, and creates admins whose
-  # passwords are in the repo. Never run it against the hosted box's data;
-  # it refuses when NODE_ENV=production unless SEED_ALLOW_DATABASE_WIPE=yes.
+  # One-off: deterministic seed data. It TRUNCATEs fixture tables and refuses
+  # NODE_ENV=production (CLAUDE.md); never run it against the hosted box.
   seed:
     build:
       context: ..
       dockerfile: ops/Dockerfile.node
+      target: tools
     command: ["npm", "run", "seed"]
     environment:
-      DATABASE_URL: postgres://filspay:filspay_dev_password@postgres:5432/filspay?sslmode=disable
+      DATABASE_URL: *database-url
     depends_on:
       postgres:
+        condition: service_healthy
+
+  # TLS reverse proxy: the only service published on all interfaces.
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    mem_limit: 64m
+    depends_on:
+      api:
         condition: service_healthy
 
   api:
     build:
       context: ..
       dockerfile: ops/Dockerfile.node
-    command: ["npx", "tsx", "apps/api/src/index.ts"]
+      target: runtime
+    command: ["node", "dist/api/index.js"]
+    restart: unless-stopped
+    # Published on loopback only, for debugging on the box; clients go
+    # through the proxy.
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     env_file: .env.docker
     environment:
       SETTLEMENT_INTERNAL_TOKEN: ${SETTLEMENT_INTERNAL_TOKEN:?set SETTLEMENT_INTERNAL_TOKEN}
       WEBHOOK_SECRET_ENCRYPTION_KEY: ${WEBHOOK_SECRET_ENCRYPTION_KEY:?set WEBHOOK_SECRET_ENCRYPTION_KEY (32 bytes, base64)}
-      # One application role (filspay) owns the whole database in this
-      # environment. Every service here, and the one-off migrate/seed jobs
-      # above, authenticate as that same role, which keeps local
-      # onboarding to a single password instead of provisioning per-service
-      # grants by hand.
-      DATABASE_URL: postgres://filspay:filspay_dev_password@postgres:5432/filspay?sslmode=disable
-      # TODO(YA, Jan): give the api its own role before anything is hosted.
+      DATABASE_URL: *database-url
       SETTLEMENT_INTERNAL_URL: http://settlement:8091
+      # The proxy is one hop: trust its X-Forwarded-For for per-IP limits.
+      TRUST_PROXY: "1"
+      # Authorize and capture hold a connection for the whole acquirer call,
+      # so the pool size sets checkout capacity (ops/loadtest/README.md).
+      PG_POOL_MAX: ${PG_POOL_MAX:-10}
+      # Per-request logging at info costs real CPU on 0.5 vCPU.
+      LOG_LEVEL: warn
+      # Collect garbage well before the 512 MB container limit kills Node.
+      NODE_OPTIONS: --max-old-space-size=384
+    cpus: 0.5
+    mem_limit: 512m
+    volumes:
+      - kyc_data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
     depends_on:
       postgres:
         condition: service_healthy
@@ -102,13 +147,13 @@ services:
     build:
       context: ..
       dockerfile: ops/Dockerfile.go
-    # The daemon exits at boot without SETTLEMENT_INTERNAL_TOKEN (there is no
-    # dev-token fallback), and the api must present the same value.
     command: ["./settlement", "daemon"]
+    restart: unless-stopped
     env_file: .env.docker
     environment:
       SETTLEMENT_INTERNAL_TOKEN: ${SETTLEMENT_INTERNAL_TOKEN:?set SETTLEMENT_INTERNAL_TOKEN}
-      DATABASE_URL: postgres://filspay:filspay_dev_password@postgres:5432/filspay?sslmode=disable
+      DATABASE_URL: *database-url
+    mem_limit: 256m
     depends_on:
       postgres:
         condition: service_healthy
@@ -117,13 +162,20 @@ services:
     build:
       context: ..
       dockerfile: ops/Dockerfile.node
-    # No subcommand = `worker`. (MK)
-    command: ["npx", "tsx", "apps/reporting/src/index.ts"]
+      target: runtime
+    # No subcommand = `worker`.
+    command: ["node", "dist/reporting/index.js"]
+    restart: unless-stopped
     environment:
-      DATABASE_URL: postgres://filspay:filspay_dev_password@postgres:5432/filspay?sslmode=disable
+      DATABASE_URL: *database-url
+      NODE_OPTIONS: --max-old-space-size=192
+    mem_limit: 256m
     depends_on:
       postgres:
         condition: service_healthy
 
 volumes:
   filspay_pgdata:
+  kyc_data:
+  caddy_data:
+  caddy_config:

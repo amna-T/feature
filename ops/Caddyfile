@@ -1,0 +1,13 @@
+# TLS reverse proxy in front of apps/api. SITE_ADDRESS is the public host
+# name (Caddy obtains and renews its certificate); the default `localhost`
+# uses Caddy's local CA. Caddy sets X-Forwarded-For, which the API trusts
+# for exactly one hop (TRUST_PROXY=1 in docker-compose.yml).
+{$SITE_ADDRESS:localhost} {
+	encode gzip
+	reverse_proxy api:3000 {
+		# Fail fast when the API is down or restarting.
+		transport http {
+			dial_timeout 3s
+		}
+	}
+}

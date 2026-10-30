@@ -6,11 +6,22 @@ it. Format loosely follows Keep a Changelog.
 
 ## [Unreleased]
 
-### Changed
-- `GET /v1/transactions/export` now requires `from` and `to` (ISO-8601), at
-  most 93 days apart; invalid dates are `400`, not `500`. The CSV is streamed
-  a page at a time instead of built in memory, and no row sharing a page's
-  boundary timestamp is skipped.
+### Hosting
+- `ops/Dockerfile.node` and `ops/Dockerfile.go` added; compose references
+  them and the stack could not be built without them.
+- Caddy TLS reverse proxy in front of the API; only 80/443 are published.
+  The API trusts X-Forwarded-For for one hop (`TRUST_PROXY=1`) so per-IP
+  login limits see real client addresses.
+- Compose: API limited to 0.5 vCPU / 512 MB with a 384 MB Node heap, limits
+  on every service, `restart: unless-stopped`, API health check, Postgres
+  memory tuning, `LOG_LEVEL=warn`, `PG_POOL_MAX=10`.
+- The API and reporting run prebuilt bundles (`npm run build`) instead of
+  `npx tsx`.
+- Overload: once 20 requests are waiting for a database connection, new ones
+  get `503 overloaded` with `Retry-After: 1` at once, and a connection
+  timeout is a 503 instead of a 500. Request, keep-alive and connection
+  timeouts are set. Capacity measured: about 15 checkouts/s
+  (`ops/loadtest/README.md`).
 
 ### Security
 - Login lockout can no longer be used to lock someone out: the per-account

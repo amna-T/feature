@@ -94,6 +94,10 @@ the action. Credits above the threshold need a second approver.
 | `LOGIN_MAX_FAILURES_PER_ACCOUNT` | api | `5` |
 | `LOGIN_MAX_FAILURES_PER_IP` | api | `50` |
 | `OTP_MAX_CHALLENGES_PER_USER` | api | `5` (login and resend together) |
+| `TRUST_PROXY` | api | `0` (ignore X-Forwarded-For); `1` behind the compose proxy |
+| `LOG_LEVEL` | api | `info`; `warn` in compose |
+| `LOAD_SHED_MAX_WAITING` | api | `20` requests waiting for a DB connection, then `503 overloaded` (`0` disables) |
+| `REQUEST_TIMEOUT_MS` / `KEEP_ALIVE_TIMEOUT_MS` / `CONNECTION_TIMEOUT_MS` | api | `30000` / `5000` / `10000` |
 
 The API is sized for 0.5 vCPU / 512 MB. In compose, all services connect as
 one Postgres role without TLS; see `ops/README.md`.
