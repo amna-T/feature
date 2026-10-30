@@ -6,6 +6,8 @@ package splits
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,6 +15,11 @@ import (
 	"github.com/filspay/settlement/internal/balances"
 	"github.com/filspay/settlement/internal/money"
 )
+
+// ErrSplitWeights means a parent's merchant_split_children weights do not
+// total exactly 10000 bps, so its batch cannot be split without over- or
+// under-paying. The batch is left 'closed' for the next run.
+var ErrSplitWeights = errors.New("splits: split weights do not total 10000 bps")
 
 // ChildShare is one child's computed allocation from a parent's settlement
 // batch payout.
@@ -103,13 +110,24 @@ func PayoutSplitBatch(ctx context.Context, db *pgxpool.Pool, batchID uuid.UUID) 
 	}
 	rows.Close()
 
+	// Weights must cover exactly 100% of the payout. Nothing enforces that
+	// on merchant_split_children (FP-250 was closed as "the seed writes
+	// 10000"): above 10000 the children were paid more than the batch net,
+	// below it the remainder was never paid to anyone. Refuse to pay; the
+	// batch stays 'closed' and is picked up by the next run once fixed.
+	weights := make([]int64, len(shares))
+	var weightSum int64
+	for i, s := range shares {
+		weights[i] = s.WeightBps
+		weightSum += s.WeightBps
+	}
+	if weightSum != 10_000 {
+		return SplitPayoutResult{}, fmt.Errorf("%w: parent %s sums to %d bps, not 10000", ErrSplitWeights, parentMerchantID, weightSum)
+	}
+
 	// Largest-remainder allocation: per-child ApplyRateFils rounded each
 	// share on its own, so the shares did not sum to the batch net and the
 	// difference was never posted anywhere.
-	weights := make([]int64, len(shares))
-	for i, s := range shares {
-		weights[i] = s.WeightBps
-	}
 	for i, a := range money.AllocateByWeights(money.Fils(netPayout), weights) {
 		shares[i].AllocatedFils = a
 	}
