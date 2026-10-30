@@ -12,6 +12,7 @@ secrets; export them first (or put them in `ops/.env`):
 ```
 cp ops/.env.docker.example ops/.env.docker   # gitignored; then set its secret:
 sed -i "s/^ACQUIRER_CALLBACK_SIGNING_SECRET=.*/ACQUIRER_CALLBACK_SIGNING_SECRET=$(openssl rand -hex 32)/" ops/.env.docker
+export POSTGRES_PASSWORD=$(openssl rand -hex 24)
 export SETTLEMENT_INTERNAL_TOKEN=$(openssl rand -hex 24)
 export WEBHOOK_SECRET_ENCRYPTION_KEY=$(openssl rand -base64 32)
 export SITE_ADDRESS=localhost        # the public host name on the hosted box
@@ -81,7 +82,10 @@ the hosted box.
 
 Every service, plus the one-off `migrate`/`seed` jobs, connects with the
 same `filspay` role and the same `DATABASE_URL`
-(`postgres://filspay:filspay_dev_password@postgres:5432/filspay?sslmode=disable`).
+(`postgres://filspay:$POSTGRES_PASSWORD@postgres:5432/filspay?sslmode=disable`).
+`POSTGRES_PASSWORD` is required (put it in `ops/.env`); it is never stored in
+this repository. For a local stack created before this change, set it to the
+old value, `filspay_dev_password`, or recreate the volume.
 `sslmode=disable` is acceptable because Postgres and every service share the
 compose bridge network on one host. A separate, limited role for the API is
 still to do.
