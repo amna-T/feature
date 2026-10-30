@@ -214,18 +214,35 @@ async function attemptOneDelivery(
   );
 }
 
-/** Step B: attempt every currently-due 'pending' delivery, sequentially. */
-// MK: no SKIP LOCKED — only ever run ONE api replica until this changes
-// FH: staging ran 2 replicas since June, never saw a dup delivery, so it's fine
+/**
+ * Step B: attempt every currently-due 'pending' delivery, sequentially.
+ *
+ * Rows are claimed first: next_attempt_at is pushed out by a short lease
+ * under FOR UPDATE SKIP LOCKED, so a second API replica (staging has run two
+ * since June) or an overlapping pass skips them instead of sending them
+ * again. Recording the outcome overwrites the lease; if the process dies
+ * mid-send, the row simply becomes due again when the lease runs out.
+ */
+const CLAIM_LEASE_SECONDS = 300;
+
 async function attemptDueDeliveries(pool: Pool, transport: WebhookTransport, config: DispatcherConfig): Promise<number> {
   const dueResult = await pool.query<DueDeliveryRow>(
-    `SELECT wd.id, wd.endpoint_id, wd.event_type, wd.delivery_event_id, wd.payload, wd.attempt_count, we.url, we.secret_ciphertext
-       FROM webhook_deliveries wd
-       JOIN webhook_endpoints we ON we.id = wd.endpoint_id
-      WHERE wd.status = 'pending' AND wd.next_attempt_at <= now()
-      ORDER BY wd.next_attempt_at ASC
-      LIMIT $1`,
-    [STEP_B_BATCH_LIMIT],
+    `WITH claimed AS (
+       UPDATE webhook_deliveries
+          SET next_attempt_at = now() + ($2 || ' seconds')::interval
+        WHERE id IN (
+          SELECT id FROM webhook_deliveries
+           WHERE status = 'pending' AND next_attempt_at <= now()
+           ORDER BY next_attempt_at ASC
+           LIMIT $1
+           FOR UPDATE SKIP LOCKED
+        )
+       RETURNING id, endpoint_id, event_type, delivery_event_id, payload, attempt_count
+     )
+     SELECT c.id, c.endpoint_id, c.event_type, c.delivery_event_id, c.payload, c.attempt_count, we.url, we.secret_ciphertext
+       FROM claimed c
+       JOIN webhook_endpoints we ON we.id = c.endpoint_id`,
+    [STEP_B_BATCH_LIMIT, CLAIM_LEASE_SECONDS],
   );
 
   for (const row of dueResult.rows) {
