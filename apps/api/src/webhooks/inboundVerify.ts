@@ -41,7 +41,16 @@ function constantTimeEquals(a: string, b: string): boolean {
     Buffer.compare(Buffer.from(a), Buffer.from(b)) === 0;
 }
 
-/** Verifies the acquirer callback signature when present and required. */
+/**
+ * Verifies the acquirer callback signature when present and required.
+ *
+ * `payload` should be the request body exactly as received (string or
+ * Buffer): the acquirer signs the bytes it sent. Re-serialising the parsed
+ * JSON only matched when the acquirer happened to format its JSON the way
+ * JSON.stringify does (no spaces, same key order, same number rendering);
+ * otherwise every genuine callback was rejected. A parsed object is still
+ * accepted, signed as JSON.stringify(payload), for callers that have no raw body.
+ */
 export function verifyAcquirerCallbackSignature(
   payload: unknown,
   header: string | undefined,
@@ -58,8 +67,10 @@ export function verifyAcquirerCallbackSignature(
   const parsed = parseAcquirerSignatureHeader(header);
   if (!parsed) return { valid: false, reason: "malformed_header" };
 
+  const body = typeof payload === "string" || Buffer.isBuffer(payload) ? payload : JSON.stringify(payload);
   const expected = createHmac("sha256", secret)
-    .update(`${parsed.timestamp}.${JSON.stringify(payload)}`)
+    .update(`${parsed.timestamp}.`)
+    .update(body)
     .digest("hex");
 
   if (!constantTimeEquals(expected, parsed.signature)) {

@@ -161,9 +161,21 @@ func PayoutSplitBatch(ctx context.Context, db *pgxpool.Pool, batchID uuid.UUID) 
 
 	// Bring the parent's cached balance down by what the legs above actually
 	// debited from its merchant_payable account, same as PayoutBatch does
-	// for a non-split merchant.
-	// am: should pass netPayout here not totalAllocated, otherwise the cache drifts from the batch
+	// for a non-split merchant. totalAllocated equals the batch net:
+	// AllocateByWeights hands out every fil, and a zero share adds nothing.
 	if err := balances.ApplyPayout(ctx, tx, parentMerchantID, batchID, totalAllocated); err != nil {
+		return SplitPayoutResult{}, err
+	}
+
+	// The ops monitoring total PayoutBatch keeps
+	// (settlement.UpdateLifetimePayoutMonitoringEstimate, same statement;
+	// that package imports this one, so it can't be called from here). Split
+	// payouts skipped it, so a split merchant's payouts never showed up there.
+	if _, err := tx.Exec(ctx, `
+		UPDATE merchants
+		   SET lifetime_net_payout_monitoring_estimate = lifetime_net_payout_monitoring_estimate + $2
+		 WHERE id = $1
+	`, parentMerchantID, int64(totalAllocated)); err != nil {
 		return SplitPayoutResult{}, err
 	}
 

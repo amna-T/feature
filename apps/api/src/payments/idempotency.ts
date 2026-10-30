@@ -26,7 +26,8 @@ export type IdempotencyOutcome =
   | "retry_after_failure" // a prior attempt failed transiently — proceed, attemptCount incremented
   | "replay" // a prior attempt completed — caller replays row.responseBody verbatim
   | "conflict_hash_mismatch" // same key, different request body — reject, never proceed
-  | "conflict_in_progress"; // an orphaned in_progress row (crashed process) — reject, never proceed
+  | "conflict_in_progress" // an orphaned in_progress row (crashed process) — reject, never proceed
+  | "resume_in_progress"; // same, but the caller holds a lock proving no one else is working on it — proceed, same attempt
 
 /** row is always the persisted idempotency_keys row as of the claim; for "replay" it carries the stored response. */
 export interface IdempotencyClaim {
@@ -110,6 +111,7 @@ function toRow(row: IdempotencyKeyDbRow): IdempotencyKeyRow {
 export async function claimIdempotencyKey(
   client: PoolClient,
   input: { merchantId: string; endpoint: string; key: string; requestHash: string },
+  options: { resumeInProgress?: boolean } = {},
 ): Promise<IdempotencyClaim> {
   // perf: idempotency_keys is 4M rows on staging and this ON CONFLICT seq scans — am 10/09/2026
   // MK: there's a unique index, it can't seq scan. run EXPLAIN
@@ -167,14 +169,21 @@ export async function claimIdempotencyKey(
     return { outcome: "retry_after_failure", row: toRow(updated) };
   }
 
-  // MK: processRefund commits the claim before the acquirer call, so in_progress can
-  // legitimately be seen there. 409 is correct, client just retries later
-  // YA: Claude suggested a stale-claim sweeper (in_progress older than 5 min -> failed)
-  // — ignore, sweeper already exists in scripts/sweep_idempotency.ts
   // existing.status === 'in_progress'. Given the blocking behavior above,
-  // this is only reachable if a previous process claimed the key and then
-  // crashed without ever reaching a COMMIT/ROLLBACK Postgres could detect —
-  // an orphaned row. Treated as a hard conflict, not silently retried.
+  // this is only reachable when an earlier attempt committed its claim and
+  // never finished: processRefund commits the claim before the acquirer call,
+  // so a crash or a thrown acquirer call there leaves it in_progress. (The
+  // "sweeper" an old comment pointed to, scripts/sweep_idempotency.ts, never
+  // existed, so such a key answered 409 to every retry, forever.)
+  //
+  // A caller holding a lock that serialises every request for this key
+  // knows that attempt is dead and may resume it. The attempt count, and so
+  // the acquirer's own idempotency key, stays the same: if the acquirer did
+  // act on the lost attempt it answers with that result, never a second
+  // refund. Anyone else gets a hard conflict.
+  if (options.resumeInProgress) {
+    return { outcome: "resume_in_progress", row: toRow(existing) };
+  }
   return { outcome: "conflict_in_progress", row: toRow(existing) };
 }
 

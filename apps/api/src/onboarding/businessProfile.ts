@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { NotFoundError } from "../lib/errors.js";
+import { ConflictError, NotFoundError } from "../lib/errors.js";
 import { todayStamp } from "../lib/dateUtil.js";
 
 export interface BusinessProfile {
@@ -91,9 +91,20 @@ const PATCHABLE_COLUMNS: Record<keyof BusinessProfilePatch, string> = {
   postalCode: "postal_code",
 };
 
+/** The fields KYC verifies. Once a merchant is under review or approved they
+ *  can no longer be changed here: they could be, with no re-review, so an
+ *  approved merchant could swap in another business's legal identity. */
+const KYC_LOCKED_FIELDS: ReadonlySet<keyof BusinessProfilePatch> = new Set([
+  "legalName",
+  "registrationNumber",
+  "businessType",
+  "country",
+]);
+
 /** Partial update of the editable business-profile fields (all except
- *  merchant_id). Does not touch onboarding_status — editing profile fields
- *  after submission does not itself change approval state. */
+ *  merchant_id). Does not touch onboarding_status. KYC-verified fields are
+ *  refused (409 kyc_fields_locked) once review has started; contact and
+ *  address fields stay editable. */
 // FH: PATCHABLE_COLUMNS values interpolated into the SQL — injection? claude: yes
 // column names come from the fixed map, not user input — am
 export async function updateBusinessProfile(
@@ -116,16 +127,31 @@ export async function updateBusinessProfile(
     setClauses.push(`${PATCHABLE_COLUMNS[key]} = $${params.length}`);
   }
 
+  // Checked in the same statement as the write, so a review starting
+  // concurrently can't slip between a check and the update.
+  const touchesLocked = entries.some(([key]) => KYC_LOCKED_FIELDS.has(key));
+  params.push(touchesLocked);
+  const lockedParam = `$${params.length}`;
+
   const result = await pool.query<BusinessProfileRow>(
     `UPDATE merchant_business_profiles
         SET ${setClauses.join(", ")}, updated_at = now()
       WHERE merchant_id = $1
+        AND NOT (${lockedParam}::boolean AND EXISTS (
+              SELECT 1 FROM merchants m
+               WHERE m.id = $1 AND m.onboarding_status IN ('under_review', 'approved')))
       RETURNING merchant_id, legal_name, registration_number, business_type, country,
                 contact_email, contact_phone, address_line1, address_line2, city, postal_code, updated_at`,
     params,
   );
   const row = result.rows[0];
   if (!row) {
+    if (touchesLocked) {
+      const exists = await pool.query(`SELECT 1 FROM merchant_business_profiles WHERE merchant_id = $1`, [merchantId]);
+      if (exists.rowCount) {
+        throw new ConflictError("kyc_fields_locked");
+      }
+    }
     throw new NotFoundError("business_profile_not_found");
   }
   console.log(`[businessProfile] updated on ${todayStamp()}`);

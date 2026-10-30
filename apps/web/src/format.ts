@@ -1,4 +1,4 @@
-import { formatBhd, toFils } from "@filspay/money";
+import { formatBhd, parseBhdToFils, toFils } from "@filspay/money";
 
 /**
  * The dashboard's display helpers. Deliberately thin: `bhd` delegates to
@@ -41,4 +41,19 @@ export function localDateTimeToIso(value: string): string | null {
   if (!value) return null;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+/**
+ * An amount typed by a person, in BHD ("5", "4.75", "4.750"), as fils.
+ * Inputs used to take raw fils, so "5" meant 5 fils, not 5 BHD, and the
+ * natural "4.750" was rejected. Null for anything that is not a positive
+ * amount with at most 3 decimals.
+ */
+export function parseBhdInput(value: string): number | null {
+  try {
+    const fils = parseBhdToFils(value) as number;
+    return fils > 0 ? fils : null;
+  } catch {
+    return null;
+  }
 }

@@ -6,6 +6,26 @@ it. Format loosely follows Keep a Changelog.
 
 ## [Unreleased]
 
+### Audit round 6 (FINDINGS.md §12)
+- Transactions CSV export: the page cursor lost microseconds, repeating rows
+  at page boundaries and looping forever when a page's worth of rows shared
+  one millisecond. Now keyed on Postgres's own timestamp text.
+- Webhook fan-out reads new outbox events from a commit-order cursor instead
+  of rescanning the whole outbox on every capture.
+- `ops/.env.docker` is no longer committed (template: `.env.docker.example`);
+  the old callback signing secret is burned and must be rotated.
+- Acquirer callbacks are verified over the raw request body.
+- A refund interrupted mid-acquirer-call can be retried (same acquirer key).
+- KYC-verified profile fields are locked once review starts.
+- Credits: the second-approver threshold counts the last 24 h, not one request.
+- Adjustment CSV: re-uploading the same rows is refused unless confirmed.
+- Adjust balance is journaled (ADR-0006 superseded).
+- Split payouts update the payout monitoring total.
+- Dashboard: refund and capture amounts are entered in BHD; role-gated
+  controls stay hidden until the role is known; Reconciliation is gated;
+  the meaningless batch "progress bar" is gone.
+- Removed the dead `apps/api/src/v1` tree and `production_seed.sql`.
+
 ### Hosting
 - `ops/Dockerfile.node` and `ops/Dockerfile.go` added; compose references
   them and the stack could not be built without them.

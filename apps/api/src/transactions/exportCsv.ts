@@ -48,11 +48,16 @@ async function* transactionPages(
   pageSize: number,
 ): AsyncGenerator<TransactionRow[]> {
   const statusArray = filters.status && filters.status.length > 0 ? filters.status : null;
-  let after: { occurredAt: Date; id: string } | null = null;
+  // The cursor keeps Postgres's own text for occurred_at: a JS Date drops
+  // the microseconds now() records, so ($5, id) sat *before* the last row
+  // and every page boundary repeated it (and anything else in that ms).
+  let after: { occurredAt: string; id: string } | null = null;
 
   while (true) {
-    const result: { rows: TransactionRow[] } = await pool.query<TransactionRow>(
-      `SELECT * FROM transactions
+    const result: { rows: Array<TransactionRow & { occurred_at_cursor: string }> } = await pool.query<
+      TransactionRow & { occurred_at_cursor: string }
+    >(
+      `SELECT *, occurred_at::text AS occurred_at_cursor FROM transactions
         WHERE merchant_id = $1
           AND ($2::timestamptz IS NULL OR occurred_at >= $2)
           AND ($3::timestamptz IS NULL OR occurred_at <  $3)
@@ -73,7 +78,7 @@ async function* transactionPages(
     if (result.rows.length > 0) yield result.rows;
     if (result.rows.length < pageSize) return;
     const last = result.rows[result.rows.length - 1]!;
-    after = { occurredAt: last.occurred_at, id: last.id };
+    after = { occurredAt: last.occurred_at_cursor, id: last.id };
   }
 }
 

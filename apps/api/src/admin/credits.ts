@@ -5,7 +5,11 @@ import { insertAdminAuditLog } from "../adminAudit/log.js";
 import { withTransaction } from "../db/withTransaction.js";
 import { ConflictError, NotFoundError } from "../lib/errors.js";
 import { assertDistinctApprover } from "./creditApproval.js";
-import { calculateCreditFeeReversal, creditRequiresSecondApprover } from "./creditThreshold.js";
+import {
+  CREDIT_APPROVAL_WINDOW_HOURS,
+  calculateCreditFeeReversal,
+  creditRequiresSecondApprover,
+} from "./creditThreshold.js";
 import { parseCreditRequestInput, type CreditReasonCode } from "./creditRequestValidation.js";
 
 const DEFAULT_LIMIT = 25;
@@ -209,14 +213,24 @@ export async function createCreditRequest(
   const draft = parseCreditRequestInput(input.body);
 
   return withTransaction(pool, async (client) => {
+    // FOR UPDATE: concurrent credits to one merchant are judged one after
+    // another against the running total below, not all against the same one.
     const merchantResult = await client.query<{ mdr_bps: number }>(
-      `SELECT mdr_bps FROM merchants WHERE id = $1`,
+      `SELECT mdr_bps FROM merchants WHERE id = $1 FOR UPDATE`,
       [input.merchantId],
     );
     const merchant = merchantResult.rows[0];
     if (!merchant) {
       throw new NotFoundError("merchant_not_found");
     }
+    const recentResult = await client.query<{ total: string }>(
+      `SELECT COALESCE(SUM(base_amount_fils), 0)::text AS total
+         FROM credit_requests
+        WHERE merchant_id = $1 AND requires_approval = false AND status = 'posted'
+          AND created_at > now() - make_interval(hours => $2)`,
+      [input.merchantId, CREDIT_APPROVAL_WINDOW_HOURS],
+    );
+    const recentSingleApproverFils = toFils(Number(recentResult.rows[0]!.total));
 
     // Never operator-supplied: the reversal is the merchant's own contracted
     // rate applied to the amount they asked to credit.
@@ -225,10 +239,10 @@ export async function createCreditRequest(
       : ZERO_FILS;
     // FH: threshold compares base + reversal, so a 50.000 BD credit with a fee reversal needs a second approver
     // MK: no — base only. fee reversal is mechanical. intended.
-    const requiresApproval = creditRequiresSecondApprover({
-      baseAmountFils: draft.baseAmountFils,
-      feeReversalFils,
-    });
+    const requiresApproval = creditRequiresSecondApprover(
+      { baseAmountFils: draft.baseAmountFils, feeReversalFils },
+      recentSingleApproverFils,
+    );
 
     const inserted = await client.query<{ id: string }>(
       `INSERT INTO credit_requests
