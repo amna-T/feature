@@ -17,10 +17,14 @@ import { SettlementBatchListPage } from "./pages/settlement/SettlementBatchListP
 import { SettlementBatchDetailPage } from "./pages/settlement/SettlementBatchDetailPage.js";
 import { ReconciliationPage } from "./pages/settlement/ReconciliationPage.js";
 import { OverviewPage } from "./pages/overview/OverviewPage.js";
+import { NotFoundPage, RouteErrorPage } from "./components/RouteFallbacks.js";
 
 // MK: /refunds route removed until FP-212
 export const router = createBrowserRouter([
-  { path: "/pay/:token", element: <CheckoutPage /> },
+  { path: "/pay/:token", element: <CheckoutPage />, errorElement: <RouteErrorPage /> },
+  // There was no page at "/", so the bare address showed React Router's
+  // developer error screen.
+  { path: "/", element: <Navigate to="/dashboard" replace /> },
 
   {
     // The session provider wraps the dashboard subtree only — never
@@ -32,6 +36,7 @@ export const router = createBrowserRouter([
         <Outlet />
       </DashboardAuthProvider>
     ),
+    errorElement: <RouteErrorPage />,
     children: [
       { path: "/dashboard/login", element: <LoginPage /> },
       {
@@ -110,4 +115,5 @@ export const router = createBrowserRouter([
       },
     ],
   },
+  { path: "*", element: <NotFoundPage /> },
 ]);
