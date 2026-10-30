@@ -94,7 +94,16 @@ export const router = createBrowserRouter([
 
           { path: "/dashboard/settlement", element: <SettlementBatchListPage /> },
           { path: "/dashboard/settlement/:id", element: <SettlementBatchDetailPage /> },
-          { path: "/dashboard/reconciliation", element: <ReconciliationPage /> },
+          {
+            // Owner/finance server-side; support is told why instead of
+            // getting a page that fails with a 403.
+            path: "/dashboard/reconciliation",
+            element: (
+              <RoleGatedPage allow={["owner", "finance"]} title="Reconciliation">
+                <ReconciliationPage />
+              </RoleGatedPage>
+            ),
+          },
 
           { path: "/dashboard/overview", element: <OverviewPage /> },
         ],

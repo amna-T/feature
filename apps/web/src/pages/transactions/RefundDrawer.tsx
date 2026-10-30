@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { describeError, request } from "../../api/client.js";
 import { useDashboardAuth } from "../../auth/DashboardAuthContext.js";
 import { RequireRole } from "../../auth/RequireRole.js";
-import { bhd } from "../../format.js";
+import { bhd, parseBhdInput } from "../../format.js";
 import type { TransactionDto } from "../../types.js";
 
 /**
@@ -62,9 +62,9 @@ export function RefundDrawer({ txn, onRefunded }: RefundDrawerProps) {
   async function handleRefund(event: React.FormEvent): Promise<void> {
     event.preventDefault();
     const trimmed = amount.trim();
-    const amountFils = trimmed === "" ? undefined : Number(trimmed);
-    if (amountFils !== undefined && (!Number.isSafeInteger(amountFils) || amountFils <= 0 || amountFils > remaining)) {
-      setError(`Amount must be a whole number of fils from 1 to ${remaining}.`);
+    const amountFils = trimmed === "" ? undefined : parseBhdInput(trimmed);
+    if (amountFils === null || (amountFils !== undefined && amountFils > remaining)) {
+      setError(`Enter an amount in BHD from 0.001 to ${bhd(remaining)}.`);
       return;
     }
     const shown = bhd(amountFils ?? remaining);
@@ -104,12 +104,11 @@ export function RefundDrawer({ txn, onRefunded }: RefundDrawerProps) {
         {open ? (
           <form className="dash-form dash-form-inline" onSubmit={(e) => void handleRefund(e)}>
             <label>
-              Amount in fils (blank refunds everything still refundable)
+              Amount in BHD (blank refunds everything still refundable)
               <input
-                type="number"
-                min={1}
-                step={1}
-                max={remaining}
+                type="text"
+                inputMode="decimal"
+                placeholder="e.g. 4.750"
                 value={amount}
                 onChange={(e) => {
                   setAmount(e.target.value);

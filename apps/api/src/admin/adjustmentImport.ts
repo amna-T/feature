@@ -1,8 +1,9 @@
+import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import { addFils, toFils, ZERO_FILS, type Fils } from "@filspay/money";
 import { insertAdminAuditLog } from "../adminAudit/log.js";
 import { withTransaction } from "../db/withTransaction.js";
-import { BadRequestError } from "../lib/errors.js";
+import { BadRequestError, ConflictError } from "../lib/errors.js";
 import { parseAdjustmentAmountFils } from "./adjustmentCsvParsing.js";
 import { postLedgerAdjustment } from "./ledgerAdjustments.js";
 
@@ -43,25 +44,53 @@ async function postAdjustmentToLedgerAndCache(
  * audit row is the last statement in the same transaction, so an import
  * that lands without a record of who ran it is not reachable.
  */
+/** Identity of an import's content, independent of its file name. */
+export function adjustmentImportContentHash(rows: AdjustmentImportRow[]): string {
+  const canonical = rows.map((r) => [r.merchantId.toLowerCase(), r.amount.trim(), r.reason ?? null]);
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+
+/**
+ * A second upload of rows already applied is refused (409 duplicate_import)
+ * unless `allowDuplicate` is set: nothing used to stop it, and the August
+ * file was posted twice. (There was never a unique file name to block it,
+ * despite an old comment saying so.)
+ */
 export async function applyAdjustmentImport(
   pool: Pool,
-  input: { adminUserId: string; originalFilename: string; rows: AdjustmentImportRow[] },
+  input: { adminUserId: string; originalFilename: string; rows: AdjustmentImportRow[]; allowDuplicate?: boolean },
 ): Promise<AdjustmentImportResult> {
   if (input.rows.length === 0) {
     throw new BadRequestError("empty_import", "the CSV must contain at least one row");
   }
+  const contentSha256 = adjustmentImportContentHash(input.rows);
 
   return withTransaction(pool, async (client) => {
+    // Serialises uploads of the same content, so a double-click can't post
+    // both copies before either sees the other.
+    await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [`adjustment-import:${contentSha256}`]);
+    if (!input.allowDuplicate) {
+      const previous = await client.query<{ id: string; original_filename: string }>(
+        `SELECT id, original_filename FROM adjustment_imports WHERE content_sha256 = $1 ORDER BY created_at LIMIT 1`,
+        [contentSha256],
+      );
+      const prior = previous.rows[0];
+      if (prior) {
+        throw new ConflictError(
+          "duplicate_import",
+          `these rows were already applied as import ${prior.id} (${prior.original_filename}); resend with allowDuplicate to post them again`,
+        );
+      }
+    }
+
     const importRow = await client.query<{ id: string }>(
-      `INSERT INTO adjustment_imports (uploaded_by_admin_user_id, original_filename, row_count)
-       VALUES ($1, $2, $3) RETURNING id`,
-      [input.adminUserId, input.originalFilename, input.rows.length],
+      `INSERT INTO adjustment_imports (uploaded_by_admin_user_id, original_filename, row_count, content_sha256)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [input.adminUserId, input.originalFilename, input.rows.length, contentSha256],
     );
     const importId = importRow.rows[0]!.id;
 
     let total = ZERO_FILS;
-    // FH: claude says nothing here stops the same CSV being applied twice. intended? (asked in #fp-backend 14/8, no answer)
-    // re-upload is blocked by the unique original_filename i think — am
     for (let i = 0; i < input.rows.length; i++) {
       const row = input.rows[i]!;
       const amountFils = parseAdjustmentAmountFils(row.amount);

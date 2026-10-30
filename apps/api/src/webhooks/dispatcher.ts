@@ -74,21 +74,64 @@ interface DueEventRow {
 }
 
 /**
- * Step A: find outbox events with at least one active endpoint that has no
- * delivery row yet, and create one 'pending' webhook_deliveries row per
- * (event, endpoint) pair found. The partial unique index
- * uq_webhook_deliveries_event_endpoint_original (0022) plus
- * ON CONFLICT ... DO NOTHING makes two concurrent passes safe by
- * construction — this SELECT's own NOT EXISTS check is an optimization,
- * not the sole correctness mechanism.
+ * Step A: create one 'pending' webhook_deliveries row per (new outbox
+ * event, active endpoint of its merchant).
+ *
+ * Events are read past this step's own cursor in commit order — (txid, id),
+ * and only from transactions older than every one still in flight
+ * (pg_snapshot_xmin), the same scheme as the reporting consumer (0078) — so
+ * a pass touches only events it has not seen. It used to join every
+ * outbox_events row ever written against webhook_deliveries with NOT EXISTS
+ * on every pass, i.e. once per capture, a cost that grew with all history.
+ * The cursor row is locked FOR UPDATE, so concurrent passes serialize here;
+ * the partial unique index uq_webhook_deliveries_event_endpoint_original
+ * (0022) plus ON CONFLICT ... DO NOTHING still makes a repeat harmless.
  *
  * The join also requires `oe.created_at >= we.created_at`: a webhook
  * delivers events going forward from registration, not a backfill — a
  * freshly-created endpoint must never receive events that
  * were already sitting in the outbox before it existed.
  */
+const FANOUT_CURSOR = "webhook_fanout";
+
 async function createMissingDeliveries(pool: Pool): Promise<number> {
+  // Page until caught up, so a fresh event never waits behind a backlog
+  // (the first run walks the existing history once).
+  let created = 0;
+  for (;;) {
+    const page = await fanOutPage(pool);
+    created += page.created;
+    if (page.read < STEP_A_BATCH_LIMIT) return created;
+  }
+}
+
+async function fanOutPage(pool: Pool): Promise<{ created: number; read: number }> {
   return withTransaction(pool, async (client) => {
+    await client.query(
+      `INSERT INTO reporting_outbox_cursor (consumer_name, last_processed_id) VALUES ($1, 0)
+       ON CONFLICT (consumer_name) DO NOTHING`,
+      [FANOUT_CURSOR],
+    );
+    const cursorResult = await client.query<{ txid: string; id: string }>(
+      `SELECT last_processed_txid::text AS txid, last_processed_id::text AS id
+         FROM reporting_outbox_cursor WHERE consumer_name = $1 FOR UPDATE`,
+      [FANOUT_CURSOR],
+    );
+    const cursor = cursorResult.rows[0]!;
+
+    const eventsResult = await client.query<{ id: string; txid: string }>(
+      `SELECT id, txid::text AS txid
+         FROM outbox_events
+        WHERE (txid, id) > ($1::xid8, $2::bigint)
+          AND txid < pg_snapshot_xmin(pg_current_snapshot())
+          AND event_type = ANY($3::text[])
+        ORDER BY txid ASC, id ASC
+        LIMIT $4`,
+      [cursor.txid, cursor.id, WEBHOOK_ELIGIBLE_EVENT_TYPES, STEP_A_BATCH_LIMIT],
+    );
+    const last = eventsResult.rows[eventsResult.rows.length - 1];
+    if (!last) return { created: 0, read: 0 };
+
     const dueResult = await client.query<DueEventRow>(
       `SELECT oe.id AS outbox_event_id, oe.event_type, oe.aggregate_id, oe.payload, oe.created_at,
               we.id AS endpoint_id
@@ -97,14 +140,9 @@ async function createMissingDeliveries(pool: Pool): Promise<number> {
            ON we.merchant_id = (oe.payload->>'merchantId')::uuid
           AND we.status = 'active'
           AND oe.created_at >= we.created_at
-        WHERE oe.event_type = ANY($1::text[])
-          AND NOT EXISTS (
-            SELECT 1 FROM webhook_deliveries wd
-             WHERE wd.outbox_event_id = oe.id AND wd.endpoint_id = we.id
-          )
-        ORDER BY oe.id ASC
-        LIMIT $2`,
-      [WEBHOOK_ELIGIBLE_EVENT_TYPES, STEP_A_BATCH_LIMIT],
+        WHERE oe.id = ANY($1::bigint[])
+        ORDER BY oe.txid ASC, oe.id ASC`,
+      [eventsResult.rows.map((r) => r.id)],
     );
 
     let createdCount = 0;
@@ -126,7 +164,13 @@ async function createMissingDeliveries(pool: Pool): Promise<number> {
       );
       createdCount += insertResult.rowCount ?? 0;
     }
-    return createdCount;
+    await client.query(
+      `UPDATE reporting_outbox_cursor
+          SET last_processed_txid = $2::xid8, last_processed_id = $3, updated_at = now()
+        WHERE consumer_name = $1`,
+      [FANOUT_CURSOR, last.txid, last.id],
+    );
+    return { created: createdCount, read: eventsResult.rows.length };
   });
 }
 

@@ -1,6 +1,9 @@
 # 0006. Adjustments are display corrections, not postings
 
-- **Status:** Accepted
+- **Status:** Superseded (October 2026 audit, FINDINGS.md N-9): the console's
+  Adjust balance now uses the journaled variant. A cache-only change disagreed
+  with the ledger, was erased by every rebuild, and ADMIN.md already told
+  operators it was journaled.
 - **Date:** 2026-05-04
 - **Deciders:** Mahmood Khalil, support lead
 - **Related:** FP-203, `apps/api/src/admin/balanceAdjustments.ts`

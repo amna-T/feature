@@ -10,6 +10,8 @@ Run from the repo root. api and settlement refuse to start without two
 secrets; export them first (or put them in `ops/.env`):
 
 ```
+cp ops/.env.docker.example ops/.env.docker   # gitignored; then set its secret:
+sed -i "s/^ACQUIRER_CALLBACK_SIGNING_SECRET=.*/ACQUIRER_CALLBACK_SIGNING_SECRET=$(openssl rand -hex 32)/" ops/.env.docker
 export SETTLEMENT_INTERNAL_TOKEN=$(openssl rand -hex 24)
 export WEBHOOK_SECRET_ENCRYPTION_KEY=$(openssl rand -base64 32)
 export SITE_ADDRESS=localhost        # the public host name on the hosted box
@@ -36,7 +38,7 @@ that talk to apps/api over HTTP (`npm run dev` inside each package).
 | `Dockerfile.go` | multi-stage, static build of `apps/settlement` on a distroless non-root base |
 | `build.mjs` | `npm run build`: bundles api and reporting to `dist/` with esbuild |
 | `loadtest/` | k6 checkout capacity test and the measured results |
-| `.env.docker` | shared service settings, loaded with `env_file:` |
+| `.env.docker.example` | template for `.env.docker` (shared service settings, loaded with `env_file:`). The real file is gitignored: it used to be committed with the callback signing secret, so that old value is burned |
 
 ## What compose sets up for hosting
 

@@ -8,7 +8,7 @@ import {
 } from "../../api/transactions.js";
 import { ApiError, describeError } from "../../api/client.js";
 import { RequireRole } from "../../auth/RequireRole.js";
-import { bhd, dash, dateTime } from "../../format.js";
+import { bhd, dash, dateTime, parseBhdInput } from "../../format.js";
 import type { TransactionDto, TransactionEventDto } from "../../types.js";
 import { RefundDrawer } from "./RefundDrawer.js";
 
@@ -71,7 +71,12 @@ export function TransactionDetailPage() {
       // Left blank, `amountFils` is omitted entirely and capture.ts captures
       // everything still outstanding — its own documented default. Computing
       // the remainder here would just be a second, staler copy of that rule.
-      const input = trimmed === "" ? {} : { amountFils: Number(trimmed) };
+      const amountFils = trimmed === "" ? undefined : parseBhdInput(trimmed);
+      if (amountFils === null) {
+        setActionError("Enter an amount in BHD with at most 3 decimals, e.g. 4.750.");
+        return;
+      }
+      const input = amountFils === undefined ? {} : { amountFils };
       // A fresh Idempotency-Key per click, including a retry after a decline —
       // same discipline as the checkout page's submit handler.
       await captureTransaction(id, input, crypto.randomUUID());
@@ -167,12 +172,9 @@ export function TransactionDetailPage() {
         <dd>{dateTime(txn.createdAt)}</dd>
       </dl>
 
-      {/* Capture and void are hidden from `support` as a UX choice — a support
-          agent looks things up, they don't move money. Unlike the
-          reconciliation page, this hide is NOT backed by a matching
-          server-side role check: the API gates capture/void at "any
-          authenticated merchant actor". Do not mistake a hidden button here for a security
-          boundary. */}
+      {/* Capture and void are owner/finance only, and the API enforces
+          that itself (it used to accept any merchant actor). Hiding the
+          buttons from `support` just avoids offering an action that 403s. */}
       <RequireRole allow={["owner", "finance"]}>
         {capturable || voidable ? (
           <div className="dash-actions">
@@ -182,11 +184,11 @@ export function TransactionDetailPage() {
               captureOpen ? (
                 <form className="dash-form dash-form-inline" onSubmit={(e) => void handleCapture(e)}>
                   <label>
-                    Amount in fils (blank captures everything outstanding)
+                    Amount in BHD (blank captures everything outstanding)
                     <input
-                      type="number"
-                      min={1}
-                      step={1}
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="e.g. 4.750"
                       value={captureAmount}
                       onChange={(e) => setCaptureAmount(e.target.value)}
                     />

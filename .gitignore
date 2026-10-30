@@ -6,3 +6,7 @@ dist/
 npm-debug.log*
 .DS_Store
 .claude/
+
+# Any .env variant holds secrets; only templates are committed.
+.env.*
+!.env.*.example

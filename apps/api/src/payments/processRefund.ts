@@ -99,12 +99,19 @@ async function processRefundLocked(
 
   // 1 validate
   const prepared = await inTransaction(conn, async (client) => {
-    const claim = await claimIdempotencyKey(client, {
-      merchantId: input.merchantId,
-      endpoint: ENDPOINT,
-      key: input.idempotencyKey,
-      requestHash,
-    });
+    // resumeInProgress: this runs under the per-transaction advisory lock,
+    // and the key's request hash pins the transaction, so an in_progress
+    // claim seen here belongs to an attempt that died mid-refund.
+    const claim = await claimIdempotencyKey(
+      client,
+      {
+        merchantId: input.merchantId,
+        endpoint: ENDPOINT,
+        key: input.idempotencyKey,
+        requestHash,
+      },
+      { resumeInProgress: true },
+    );
 
     if (claim.outcome === "conflict_hash_mismatch") {
       throw new UnprocessableEntityError("idempotency_key_reused");

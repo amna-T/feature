@@ -1,40 +1,33 @@
 import type { ReactNode } from "react";
 import { useDashboardAuth } from "./DashboardAuthContext.js";
+import { roleGateDecision } from "./roleGate.js";
 import type { MerchantRole } from "../types.js";
 
 /**
- * A UI-only convenience gate. It is **explicitly not** the security boundary
- * for anything it wraps.
+ * A UI-only convenience gate. It is **not** the security boundary for
+ * anything it wraps: every action and page it hides is also role-checked by
+ * the API (capture/void, payment-link create/cancel, refunds, every webhook
+ * route, reconciliation), which answers 403 regardless.
  *
- * Most of what this hides is also gated server-side by the route's own
- * `requireMerchantRole(...)` — payment-link create/cancel, every webhook
- * route, the reconciliation report. Capture and void are the deliberate
- * exception: the API gates them at "any authenticated merchant actor" with no
- * narrower role check, so hiding them from `support` here is a UX choice
- * (a support agent's job is to look things up, not move money) and nothing
- * more. That divergence is called out at the call site too, so nobody
- * mistakes the hidden button for a boundary it isn't.
- *
- * Hence the deliberate default: when the current role is unknown (the `me`
- * call hasn't resolved), `children` are shown, not hidden. Hiding on
- * uncertainty would quietly turn this into the thing deciding access. The
- * server's `403` is the answer; `describeError` renders it plainly when it
- * comes back.
+ * Until `me` has loaded the role is unknown, so nothing is rendered. It used
+ * to show the children in that window, so a support user saw owner-only
+ * buttons and pages flash up (and could click them into a 403).
  */
-// MK: UI gate only. the server enforces roles
 export function RequireRole({
   allow,
   children,
   fallback = null,
+  loading = null,
 }: {
   allow: MerchantRole[];
   children: ReactNode;
   fallback?: ReactNode;
+  loading?: ReactNode;
 }) {
   const { me } = useDashboardAuth();
-  if (me && !allow.includes(me.role)) {
-    return <>{fallback}</>;
-  }
+  const decision = roleGateDecision(me, allow);
+  if (decision === "loading") return <>{loading}</>;
+  if (decision === "denied") return <>{fallback}</>;
   return <>{children}</>;
 }
 
@@ -61,6 +54,7 @@ export function RoleGatedPage({
   return (
     <RequireRole
       allow={allow}
+      loading={<p>Loading...</p>}
       fallback={
         <section>
           <h1>{title}</h1>
