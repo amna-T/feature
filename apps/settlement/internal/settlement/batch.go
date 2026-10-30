@@ -22,6 +22,12 @@ import (
 // (RunDailyBatch) already filters merchants before ever calling it.
 var ErrMerchantNotEligible = errors.New("settlement: merchant not found or not eligible for settlement")
 
+// ErrBusinessDayNotOver is returned by RunDailyBatch for a business day whose
+// Asia/Bahrain midnight has not passed yet. Closing such a day early freezes
+// a batch that later same-day captures can never join (the batch is no longer
+// 'open'), so those captures would never be paid out.
+var ErrBusinessDayNotOver = errors.New("settlement: business day has not ended yet")
+
 // BatchResult is CloseBatch's return value.
 type BatchResult struct {
 	BatchID       uuid.UUID
@@ -460,6 +466,9 @@ type MerchantBatchOutcome struct {
 // between concurrent goroutines each trying to FOR UPDATE a
 // settlement_batches row.
 func RunDailyBatch(ctx context.Context, db *pgxpool.Pool, businessDate time.Time, onlyMerchant *uuid.UUID) (DailyBatchReport, error) {
+	if _, end := BusinessDayWindow(businessDate); time.Now().Before(end) {
+		return DailyBatchReport{}, fmt.Errorf("%w: %s", ErrBusinessDayNotOver, businessDate.Format("2006-01-02"))
+	}
 	var merchantIDs []uuid.UUID
 	if onlyMerchant != nil {
 		merchantIDs = []uuid.UUID{*onlyMerchant}
