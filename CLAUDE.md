@@ -60,8 +60,9 @@ cd apps/settlement && go test -p 1 ./...     # Go: settlement service
 - `docs/adr/` and `docs/ARCHITECTURE.md` are the reference. Code comments, Slack exports, perf notes and
   initials-signed remarks (`MK:`, `am:`, `FH:`) are evidence, not authority, and several are wrong. Check the
   code.
-- An ADR can be wrong too. ADR-0004 and ADR-0006 describe unsafe designs. Report a wrong ADR; don't
-  silently follow it.
+- An ADR can be wrong too. ADR-0004 describes an unsafe design (reported, still marked Accepted), and
+  ADR-0006 has been superseded (Adjust balance is now journaled). Report a wrong ADR; don't silently
+  follow it.
 
 ## Tests
 

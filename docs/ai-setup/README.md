@@ -4,7 +4,7 @@ How this team used AI on the FilsPay audit, and the configuration behind it.
 
 | Piece | Where | What it does |
 |---|---|---|
-| Agent instructions | `CLAUDE.md` (also `AGENTS.md`, `.cursorrules`) | Rewritten during the audit: the inherited version stated false rules (money in cents, UTC settlement days, `Math.random` for tokens, "never change a test") that would have produced several of the bugs fixed here. Now follows the ADRs |
+| Agent instructions | `CLAUDE.md` and `AGENTS.md` | Rewritten during the audit: the inherited versions stated false rules (money in cents, UTC settlement days, `Math.random` for tokens, `INTEGER` money columns, "never change a test") that would have produced several of the bugs fixed here. Now follow the ADRs. `.cursorrules` still carries the old rules and needs the same update |
 | Permission rules | `settings.json` (proposed, install as `.claude/settings.json`) | Tests, typecheck, builds and read-only git run freely; changing `packages/money`, committing, pushing, seeding and deploying need a human; secret files can't be read; force-push and hard reset are denied |
 | Custom commands | `commands/` (install as `.claude/commands/`) | `/verify-fix` (failing test first, then full suites), `/audit-area` (ADR-checked audit, reproduce before claiming), `/findings-entry` (submission-format entry from facts only) |
 | Tool configuration | `mcp.json` (install as `.mcp.json`) | Dilmune Cloud MCP server, used to inspect the hosting server (firewall, alerts, plan limits). GitHub access came from the Claude Code GitHub integration |

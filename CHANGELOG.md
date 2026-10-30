@@ -16,6 +16,35 @@ it. Format loosely follows Keep a Changelog.
 - Admin console: same family on a darker "Operations" sidebar so the two
   planes can't be confused; the impersonation banner stays loud.
 - Styling only plus layout markup: no API, money or role logic changed.
+### Hosting and deployment (PRs #15, #17–#20)
+- `ops/deploy.sh`: pull, build, migrate, restart and health-check in one
+  command. It refuses to run in the nightly settlement window (00:00–01:00
+  Bahrain) unless `FORCE=1`, and settlement gets a 120 s stop grace period so
+  an in-flight batch transaction can finish.
+- The proxy image serves the merchant dashboard and checkout at
+  `https://SITE_ADDRESS/` and the admin console at `:8443`, and proxies `/v1`
+  to the API on the same origin. Production frontend builds call the API on
+  their own origin (they fell back to `http://localhost:3000`), and payment
+  links use `CHECKOUT_BASE_URL=https://SITE_ADDRESS` (they pointed at
+  `http://localhost:5173`).
+- `POSTGRES_PASSWORD` is required from the environment; the dev password is no
+  longer hard-coded in compose.
+- Caddy sends HSTS, X-Content-Type-Options, X-Frame-Options, Referrer-Policy
+  and a same-origin Content-Security-Policy, and drops the Server header.
+- HTTPS works on a bare IP address (`default_sni`).
+- Caddy memory limit raised from 64 MB to 128 MB.
+- `scripts/set_passwords.ts` replaces the seeded (public) merchant and admin
+  passwords; hosted demos set `OTP_DEV_EXPOSE=true` because there is no
+  email/SMS delivery for login codes.
+- Capacity measured on the hosted box: 14 checkouts/s sustained, ceiling
+  about 15/s (`ops/loadtest/README.md`).
+- `docs/ai-setup/`: the team's AI configuration (permission rules, custom
+  commands, MCP config), proposed for a human to install.
+
+### Dashboard and admin (PR #14)
+- `/` goes to the dashboard; unknown pages and render errors show friendly
+  "Page not found" / "Something went wrong" pages instead of React Router's
+  developer screen.
 
 ### Final sweep (FINDINGS.md §13)
 - Checkout: card details are validated (including expiry) before the link is

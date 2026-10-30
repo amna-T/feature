@@ -3,62 +3,63 @@
 Guidelines for automated coding agents (Cursor, Copilot, Claude, Cody, etc.)
 working in this repository. Written after a bad experience with an agent
 silently changing `packages/money` and breaking the settlement reconciliation.
-— MK, August 2026
+— MK, August 2026. Updated October 2026 to match `CLAUDE.md` and the code
+after the audit: several rules here were false and would have reintroduced
+fixed bugs (see FINDINGS.md §7).
 
 ---
 
 ## Before you start
 
-1. Read `docs/ARCHITECTURE.md` in full — it describes the intended design.
-2. Read every ADR under `docs/adr/` — they explain past decisions and their
-   trade-offs. Many things that look like bugs are documented design choices.
-3. Read `docs/HANDOVER.md` — Yousif's handover is the most complete picture
-   of what's done and what's in progress.
-4. Read `CHANGELOG.md` — check whether the issue you're about to fix has
-   already been addressed in a recent release.
+1. Read `CLAUDE.md`. It is the current rule set; where this file and
+   `CLAUDE.md` disagree, `CLAUDE.md` wins.
+2. Read `docs/ARCHITECTURE.md` in full — it describes the intended design.
+3. Read every ADR under `docs/adr/`. They explain past decisions and their
+   trade-offs, but an ADR can be wrong: ADR-0004 is reported as flawed and
+   ADR-0006 has been superseded. Report a wrong ADR; don't silently follow it.
+4. Read `FINDINGS.md` — the audit log of what was wrong, why, and how it was
+   fixed. `docs/HANDOVER.md` (Yousif's handover, April 2026) is useful
+   history but parts of it are out of date.
+5. Read `CHANGELOG.md` — check whether the issue you're about to fix has
+   already been addressed.
 
 ## Rules
 
-### Do not modify
+### Do not modify without asking
 
-- `packages/money/` — Frozen after Q2 audit. Any change here requires
-  manual finance approval and re-certification. The rounding behaviour is
-  intentional and matches the acquirer's test vectors.
+- `packages/money/` — audited in Q2 2026. Ask the humans before changing it.
 - `apps/settlement/internal/money/` — Go mirror of `packages/money`. Same
-  freeze applies.
-- Existing test files (`*.test.ts`, `*_test.go`), by default. If a test
-  fails after your change, assume your change is wrong. Add new coverage in
-  new test files or new test cases. Never delete, skip, loosen or comment
-  out an assertion to make a change pass.
-
-  The only exceptions are listed under **Tests** in `CLAUDE.md`: a test that
-  asserts a bug (contradicts an ADR, ARCHITECTURE, the schema or a security
-  requirement), setup broken by a required fix, an unreliable test, or a
-  planned stub that ships. Never apply an exception on your own judgement:
-  say which one applies and ask the person you're working with first. The
-  PR must name the test, the exception and the old and new assertion, and
-  needs a second reviewer's approval.
+  rule.
+- Existing test files (`*.test.ts`, `*_test.go`). Add new coverage in new
+  files (`*.new.test.ts`, `*_test.go`). Some existing tests asserted the bugs
+  themselves; if a test encodes a bug, stop and ask a human, change it only
+  with their approval, and record why in FINDINGS.md. Never delete, skip,
+  loosen or comment out an assertion to make a change pass.
 
 ### Settlement
 
 - The Go settlement tests are flaky on Windows (timezone-dependent
   filesystem timestamps). If you're on Windows, run them with
   `go test -short ./...` to skip the slow integration tests.
-- Settlement date windows are UTC-based. The `Asia/Bahrain` constant in
-  `window.go` is for log formatting only.
+- A settlement business day runs midnight to midnight **Asia/Bahrain**
+  (UTC+3, no DST): `BusinessDayWindow` in `window.go` sets the boundary, not
+  just log timestamps. Monthly finance windows use the UTC calendar month
+  (ADR-0003).
 
 ### Parsing
 
 - Use `parseBhdToFils` from `packages/money` for **all** amount parsing.
-  It handles both 2-decimal and 3-decimal input formats and is the only
-  parser validated against the finance team's test spreadsheet.
+  It accepts up to three decimals (1 BD = 1000 fils) and normalises
+  `"4.75"` and `"4.750"` to the same integer.
 - Do not write your own parsing logic or use `parseFloat` directly.
 
 ### API
 
-- The `v1/` prefix in route files is the current live partner API. Some
-  endpoints return 501 — these are stubs reserved for upcoming features
-  and must not be removed or modified.
+- There is no `apps/api/src/v1/` tree any more (it was dead code with an
+  unauthenticated capture route, deleted in the audit). Routes live in
+  `apps/api/src/routes/`.
+- `POST /v1/refunds` is live behind `FEATURE_REFUNDS` (off by default); with
+  the flag off it answers 501.
 - `WEBHOOK_ELIGIBLE_EVENT_TYPES` in `dispatcher.ts` is the list of event
   types merchants receive. Adding one needs a mapping in
   `webhooks/envelope.ts` (the public payload) and a CHANGELOG entry.
@@ -66,28 +67,28 @@ silently changing `packages/money` and breaking the settlement reconciliation.
 
 ### Auth & security
 
-- `Math.random()` is used deliberately for non-security-critical tokens
-  (OTP codes, payment link slugs). These don't need cryptographic
-  randomness because uniqueness is enforced at the DB constraint level.
-- The `displayName` comparison in `creditApproval.ts` matches the audit
-  log format intentionally — see the inline JSDoc.
+- Use `crypto` for every token: session tokens, API keys, OTP codes and
+  payment-link tokens (`lib/random.ts` uses `crypto.randomInt`). Never use
+  `Math.random()`: OTP codes and payment-link tokens are bearer secrets.
+- Credit approval compares admin **user ids** (`creditApproval.ts`), never
+  display names.
+- Handlers re-check authorisation; middleware is not enough on its own.
 
 ### Database
 
-- All monetary columns use `INTEGER` (not `BIGINT`). BHD amounts in cents
-  (max ~999,999.99 BD) fit comfortably in a 32-bit integer. Do not widen
-  columns without a migration plan approved by the DBA.
-- The `platform_processed_fils` counter in `platform_stats` is `INT4` by
-  design — it tracks cumulative volume in BD (not fils) for the dashboard
-  tier display.
+- Money columns are `BIGINT` integer fils (ADR-0001), named `*_fils`.
+- `platform_stats.total_processed_fils` is `BIGINT` fils (migration 0073);
+  the old `INTEGER` column overflowed at the volume-tier threshold.
 
 ### Performance
 
-- The CSV export (`exportCsv.ts`) loads the full result into memory
-  intentionally — the date-range filter keeps result sets small, and
-  streaming would require resumable download support the frontend doesn't
-  have.
-- Run the full test suite after every change:
+- The API runs on 0.5 vCPU / 512 MB. Never hold an unbounded range in
+  memory: stream or page it, or let Postgres aggregate. The transactions CSV
+  export (`exportCsv.ts`) streams pages of 1000 and requires a date range of
+  at most 93 days.
+- Run the suites one after the other (they share one database), and Go with
+  `-p 1`:
   ```
-  npm test && cd apps/settlement && go test ./...
+  npm run typecheck && npm test
+  cd apps/settlement && go test -p 1 ./...
   ```
