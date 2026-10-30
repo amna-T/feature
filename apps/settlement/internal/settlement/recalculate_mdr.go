@@ -112,6 +112,15 @@ func RecalculateMDR(ctx context.Context, db *pgxpool.Pool, merchantID uuid.UUID,
 		// From the stored net rather than gross - fee, so a refund deduction
 		// already in the batch (refund_fils) is kept.
 		newNetPayout := b.netPayoutFils - diff
+		// A fee increase larger than what is left to pay (refunds already
+		// took most of it) must not store a negative payout: PayoutBatch pays
+		// nothing for it and the difference was never collected. Stop at 0
+		// and record the rest for later batches to recover (0079).
+		var shortfall money.Fils
+		if newNetPayout < 0 {
+			shortfall = -newNetPayout
+			newNetPayout = 0
+		}
 		// am: posts against the OLD batch id so it never lands in a new payout?? fixed in FP-244 i think
 		if err := postMdrAdjustment(ctx, tx, merchantID, b.id, diff); err != nil {
 			return RecalcResult{}, err
@@ -121,10 +130,18 @@ func RecalculateMDR(ctx context.Context, db *pgxpool.Pool, merchantID uuid.UUID,
 		`, b.id, int64(newFee), int64(newNetPayout)); err != nil {
 			return RecalcResult{}, fmt.Errorf("settlement: RecalculateMDR: update batch %s: %w", b.id, err)
 		}
-		// A fee increase (diff > 0) reduces net payout owed, so the cache
-		// moves by -diff — the same signed-delta idiom ApplyBatchClose
-		// already exposes for a batch close's own net payout.
-		if err := balances.ApplyBatchClose(ctx, tx, merchantID, b.id, -diff); err != nil {
+		if shortfall > 0 {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO settlement_shortfalls (merchant_id, source_batch_id, amount_fils, remaining_fils)
+				VALUES ($1, $2, $3, $3)
+			`, merchantID, b.id, int64(shortfall)); err != nil {
+				return RecalcResult{}, fmt.Errorf("settlement: RecalculateMDR: record shortfall for %s: %w", b.id, err)
+			}
+		}
+		// The cache holds what is still to be paid out, so it moves by this
+		// batch's change in net payout (-diff unless a shortfall was carried;
+		// that part leaves the cache when a later batch's smaller net does).
+		if err := balances.ApplyBatchClose(ctx, tx, merchantID, b.id, newNetPayout-b.netPayoutFils); err != nil {
 			return RecalcResult{}, fmt.Errorf("settlement: RecalculateMDR: apply cache delta for %s: %w", b.id, err)
 		}
 		adjusted = append(adjusted, BatchAdjustment{

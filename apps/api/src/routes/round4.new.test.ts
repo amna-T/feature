@@ -6,12 +6,14 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import { Pool } from "pg";
+import { toFils } from "@filspay/money";
 import { loadConfig } from "../config.js";
 import { issueApiKey } from "../apiKeys/issue.js";
 import { recordKycReview } from "../onboarding/review.js";
 import { createAcquirerSimulator } from "../acquirer/simulator.js";
 import type { AcquirerSimulator } from "../acquirer/types.js";
 import { createPaymentLink } from "../paymentLinks/create.js";
+import { authorizeTransaction } from "../payments/authorize.js";
 import { payPaymentLink } from "../paymentLinks/pay.js";
 import { isInternalWebhookHost, validateWebhookUrl } from "../webhooks/create.js";
 import { parseCreditRequestInput } from "../admin/creditRequestValidation.js";
@@ -105,4 +107,29 @@ test("a manual credit cannot be dated in the future", () => {
   assert.throws(() => parseCreditRequestInput({ ...base, effectiveDate: "2099-01-01" }));
   const todayBahrain = new Date(Date.now() + 3 * 3_600_000).toISOString().slice(0, 10);
   assert.equal(parseCreditRequestInput({ ...base, effectiveDate: todayBahrain }).effectiveDate, todayBahrain);
+});
+
+test("authorize records whether the sale was made in test mode", async () => {
+  const seen: Record<string, boolean | null> = {};
+  for (const testMode of [false, true]) {
+    const m = await pool.query<{ id: string }>(
+      `INSERT INTO merchants (display_name, mdr_bps, test_mode) VALUES ($1, 250, $2) RETURNING id`,
+      [`Round4 testmode ${randomUUID()}`, testMode],
+    );
+    const merchantId = m.rows[0]!.id;
+    await recordKycReview(pool, { merchantId, outcome: "approved", reviewerIdentifier: "test" });
+    const res = await authorizeTransaction(pool, createAcquirerSimulator(config), {
+      merchantId,
+      amountFils: toFils(1_000),
+      card: CARD,
+      idempotencyKey: randomUUID(),
+      actor: { type: "system" },
+    });
+    assert.equal(res.statusCode, 201);
+    const row = await pool.query<{ test_mode: boolean | null }>(`SELECT test_mode FROM transactions WHERE id = $1`, [
+      (res.body as { id: string }).id,
+    ]);
+    seen[String(testMode)] = row.rows[0]!.test_mode;
+  }
+  assert.deepEqual(seen, { false: false, true: true });
 });
