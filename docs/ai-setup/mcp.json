@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "dcs": {
+      "type": "http",
+      "url": "https://mcp.dilmune.com/mcp"
+    }
+  }
+}

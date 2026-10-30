@@ -4,6 +4,14 @@ The FilsPay stack: Postgres, apps/api behind a TLS reverse proxy (Caddy),
 apps/settlement and apps/reporting. The hosted demo box (0.5 vCPU / 2 GB RAM /
 2 GB disk) runs this same compose file.
 
+## Redeploy (one command)
+
+On the server, after the first setup below: `ops/deploy.sh`. It pulls main,
+builds, runs migrations, restarts the services and health-checks the API. It
+refuses to run between 00:00 and 01:00 Bahrain time (the nightly settlement
+close) unless `FORCE=1`; settlement also gets a 120 s stop grace period so an
+in-flight batch transaction commits or rolls back cleanly.
+
 ## Quick start
 
 Run from the repo root. api and settlement refuse to start without two

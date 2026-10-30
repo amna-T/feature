@@ -5,7 +5,10 @@ dist/
 .env.local
 npm-debug.log*
 .DS_Store
-.claude/
+# Personal Claude Code state stays local; the team's AI setup is committed.
+.claude/*
+!.claude/settings.json
+!.claude/commands/
 
 # Any .env variant holds secrets; only templates are committed.
 .env.*
