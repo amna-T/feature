@@ -29,7 +29,7 @@ func LoadFeeSchedules(ctx context.Context, tx pgx.Tx, merchantID uuid.UUID) ([]F
 	rows, err := tx.Query(ctx, `
 		SELECT effective_from, mdr_bps FROM fee_schedules
 		 WHERE merchant_id = $1
-		 ORDER BY effective_from ASC
+		 ORDER BY effective_from ASC, created_at ASC
 	`, merchantID)
 	if err != nil {
 		return nil, err
@@ -56,6 +56,10 @@ func LoadFeeSchedules(ctx context.Context, tx pgx.Tx, merchantID uuid.UUID) ([]F
 // — YA: always resolve against the event's own time. a rate that changes
 // next week must not touch anything captured this week, and vice versa.
 func EffectiveMdrBpsAt(schedules []FeeScheduleRow, asOf time.Time, fallbackMdrBps int64) int64 {
+	// Ties on effective_from are ordered by created_at, so walking from the end
+	// picks the latest-entered row, the same tie-break as the API's
+	// feeSchedule.ts (it was arbitrary here, so a same-day correction could
+	// be captured at one rate and settled at another).
 	// schedules is ascending by construction (LoadFeeSchedules); walk from
 	// the end for the newest row that already applies. A binary search would
 	// work too, but this list is at most a handful of rows per merchant —
