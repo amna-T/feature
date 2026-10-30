@@ -252,7 +252,7 @@ Severity: 🔴 critical · 🟠 high · 🟡 medium.
 | N-3 | `db/migrations/0072` | `refund_merchant_summary` joins `t.id = r.id`, which should be `r.transaction_id`, and double-sums `captured_fils`. |
 | N-6 | `payments/capture.ts` vs `discounted_fee.go` | The capture-time fee ignores `negotiated_discount_bps`. The discount is added later only on the `/v1/transactions` route, never for payment-link captures, while settlement applies it to the amount. The ledger fee and the batch fee disagree. |
 | N-7 | `settlement/query.ts` reconciliation | Uses `merchants.mdr_bps` (the "0046 sync trigger" doesn't exist) and float `estimateFeeFils`. |
-| N-8 | `apps/reporting` cursor | Outbox read by `id > cursor`. Ids are assigned at insert, not commit, so a slower transaction's lower id gets skipped forever. |
+| N-8 *(fixed in R3-1)* | `apps/reporting` cursor | Outbox read by `id > cursor`. Ids are assigned at insert, not commit, so a slower transaction's lower id gets skipped forever. |
 | N-9 | `ADR-0006` / `balanceAdjustments.ts` | "Adjust balance" writes only the cache. The next rebuild wipes it, and ADMIN.md tells support it is journaled. |
 | N-10 | `webhooks/archiveReplay.ts` | Archive loads the whole range into one JSON row (ADMIN.md says "pages of 1000"). A large range can OOM a 512 MB API. |
 | N-11 | `ops/.env.docker` | Committed to git with `ACQUIRER_CALLBACK_SIGNING_SECRET`. `.gitignore` only matches `.env`. Rotate it and ignore `.env.*`. |
@@ -329,6 +329,31 @@ Same format: **where** · **why** · **breaks** · **fix**. All fixed unless mar
 | R2-32 | `webhooks/archiveReplay.ts` | whole range in one JSON row (also N-10) |
 | R2-33 | `apps/web` SettlementBatchDetailPage | "progress bar" is `gross/10000` %, meaningless |
 | R2-34 | refunds | `refund.succeeded` webhook and reporting rollups still not wired (FP-300 checklist) |
+
+---
+
+## 9. Round 3: splits and payouts, frontend roles, seed and migration data
+
+### The venue hint
+
+> *My clock says 07:58. Theirs says 08:30. Trust the time I wrote, not the place; it starts in the 1.*
+
+- **The two times** are Yousif's "dead man's switch" (`0af74f0`, 07:58) and Ali's "revoke yousif" (`800e1e6`, 08:30) on 9 April.
+- **"Not the place":** in the commit graph Yousif's commit sits **after** the revoke, but its timestamp shows he wrote it **before** his access was taken.
+- **"Trust the time I wrote":** believe the timestamp, not the position in history.
+- **"It starts in the 1":** the chain begins with transmission 1 (`fe24d26`).
+- **The code bug of the same shape:** trusting *order/position* over the *real time*. One was already fixed (M-8: the fee display trusted `created_at` order over `effective_from`). The other was still open and is fixed now as R3-1 (also N-8).
+
+| # | Where | Why → what breaks | Fix |
+|---|---|---|---|
+| 🟠 R3-1 | `apps/reporting` cursor | Outbox read by `id > cursor`. ids are taken at INSERT, so a slow transaction's lower id commits after the cursor passed it → **that capture never reaches reporting**. This is HANDOVER's unfinished "commit order … xid8 query". The new test loses 1 of 2 captures on the old code. | read by `(txid, id)` below `pg_snapshot_xmin` (migration 0078) |
+| 🔴 R3-2 | `splits/allocate.go` | Split weights were never checked to total 10000 (FP-250 closed as "the seed writes 10000"). Original code: above 10000 → children paid **more than the batch net**; below → remainder never paid. My round-1 normalisation instead gave the parent's share to the children. | refuse to pay that parent's split (batch stays closed, logged); the run continues for everyone else |
+| 🟠 R3-3 | `recalculate_mdr.go` | "Recalculate at current terms" used `merchants.mdr_bps`. No trigger keeps it in sync (the "0046 trigger" doesn't exist) → scheduled merchants were re-priced at their old default rate | resolve via `fee_schedules` |
+| 🟡 R3-4 | `fee_schedule.go` | same-`effective_from` ties resolved arbitrarily in Go, by newest `created_at` in TS → a same-day correction could be captured at one rate and settled at another | `ORDER BY effective_from, created_at` |
+| 🔴 R3-5 | `db/seed`, `ops/docker-compose.yml` | The seed TRUNCATEs merchants, transactions, ledger_entries and admin_users **with CASCADE** (twice, counting its self-check) and creates `superadmin@filspay.test` with a password in git. The compose comment said it was safe on a shared DB, and the hosted box runs that file → **full data wipe plus a known super_admin password** | refuses when `NODE_ENV=production` unless `SEED_ALLOW_DATABASE_WIPE=yes`; comment corrected |
+| 🟡 R3-6 | `db/seed/fixtures/production_seed.sql` | *Reported:* a 50k-line "production-equivalent" dump from `staging-bahrain-prod-mirror`, committed and used by nothing. It can't load against the schema: 8,052 ledger legs on accounts that don't exist, 6,638 invalid event types, unbalanced groups, 61 duplicate batches. Its one consistent signal: the test-mode merchant Upsilon has 29 settlement batches (matches T-3). Remove it from git; real merchant financials don't belong in a repo | — |
+| 🟡 R3-7 | `splits/allocate.go` | *Reported:* split payouts skip `UpdateLifetimePayoutMonitoringEstimate`, and children get no ledger rows and no `settlement.paid`. Only `settlement_batch_splits` records their share | — |
+| 🟡 R3-8 | `apps/web` `RequireRole` | *Reported:* renders the protected children while `me` is still null (fails open), and Reconciliation/Settlement summary aren't hidden from `support`, who just get 403s. The server is the real gate, so this is UX only | — |
 
 ---
 
