@@ -188,6 +188,17 @@ export async function applyDailySummaryRollup(
  * filters to the three types handled below, so this branch should never
  * actually run against real data.
  */
+async function applyBatchPaid(client: PoolClient, row: OutboxEventRow): Promise<void> {
+  const payload = row.payload as { batchId: string };
+  await client.query(
+    `UPDATE merchant_payout_trends mpt
+        SET status = sb.status, paid_at = sb.paid_at, last_updated_at = now()
+       FROM settlement_batches sb
+      WHERE sb.id = $1 AND mpt.settlement_batch_id = sb.id`,
+    [payload.batchId],
+  );
+}
+
 export async function applyEvent(client: PoolClient, row: OutboxEventRow): Promise<void> {
   switch (row.event_type) {
     case "transaction.captured":
@@ -196,6 +207,8 @@ export async function applyEvent(client: PoolClient, row: OutboxEventRow): Promi
       return applyTransactionVoided(client, row);
     case "settlement.batch_closed":
       return applyBatchClosed(client, row);
+    case "settlement.paid":
+      return applyBatchPaid(client, row);
     default:
       throw new Error(`applyEvent: unhandled event_type ${row.event_type}`);
   }

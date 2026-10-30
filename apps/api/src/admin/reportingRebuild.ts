@@ -35,5 +35,16 @@ export async function refreshAnalyticsRollups(client: PoolClient): Promise<Rebui
       GROUP BY t.merchant_id, (te.occurred_at AT TIME ZONE 'Asia/Bahrain')::date`,
   );
 
+  // The rollups now reflect everything already in transaction_events and
+  // settlement_batches. Move the worker's cursor past every outbox row that
+  // exists, or it would replay events this rebuild already counted and add
+  // them a second time.
+  await client.query(
+    `INSERT INTO reporting_outbox_cursor (consumer_name, last_processed_id, updated_at)
+     VALUES ('reporting', (SELECT COALESCE(MAX(id), 0) FROM outbox_events), now())
+     ON CONFLICT (consumer_name) DO UPDATE
+       SET last_processed_id = EXCLUDED.last_processed_id, updated_at = now()`,
+  );
+
   return { volumeRows: volumeResult.rowCount ?? 0, trendRows: trendResult.rowCount ?? 0 };
 }
