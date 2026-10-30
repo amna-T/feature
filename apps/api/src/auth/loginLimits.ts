@@ -8,7 +8,10 @@ import { TooManyRequestsError } from "../lib/errors.js";
  * every API instance sees the same numbers. Over the last
  * `loginWindowMinutes`:
  *
- * - failed password attempts per account (`loginMaxFailuresPerAccount`);
+ * - failed password attempts per account from one client IP
+ *   (`loginMaxFailuresPerAccount`). Counting per account *and* IP means a
+ *   stranger who knows an email can only lock it for their own address; the
+ *   owner on another network can still log in;
  * - failed password attempts per client IP (`loginMaxFailuresPerIp`). Only
  *   failures count, so many users behind one proxy aren't throttled by each
  *   other's successful logins;
@@ -18,7 +21,8 @@ import { TooManyRequestsError } from "../lib/errors.js";
  *   could be bypassed by logging in again.
  *
  * Over a limit the request gets 429 `too_many_attempts` with Retry-After,
- * before any password is hashed.
+ * before any password is hashed. A refused attempt is not recorded, so
+ * knocking on a locked account doesn't keep it locked.
  */
 
 export type LoginPlane = "merchant" | "admin";
@@ -70,7 +74,8 @@ export async function beginLoginAttempt(
   const counts = await pool.query<{ account_failures: number; ip_failures: number }>(
     `SELECT
        (SELECT count(*)::int FROM login_failures
-         WHERE plane = $1 AND account_key = $2 AND created_at > now() - make_interval(mins => $4::int)) AS account_failures,
+         WHERE plane = $1 AND account_key = $2 AND ip = $3
+           AND created_at > now() - make_interval(mins => $4::int)) AS account_failures,
        (SELECT count(*)::int FROM login_failures
          WHERE plane = $1 AND ip = $3 AND created_at > now() - make_interval(mins => $4::int)) AS ip_failures`,
     [input.plane, input.accountKey, input.ip, config.loginWindowMinutes],
@@ -78,6 +83,9 @@ export async function beginLoginAttempt(
   const row = counts.rows[0]!;
   // The counts include this attempt, hence ">".
   if (row.account_failures > config.loginMaxFailuresPerAccount || row.ip_failures > config.loginMaxFailuresPerIp) {
+    // Refused without a password check, so it isn't a failure: recording it
+    // would let anyone keep the lock alive by retrying.
+    await clearLoginAttempt(pool, attemptId);
     throw tooManyAttempts(reply, config);
   }
   return attemptId;

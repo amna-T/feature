@@ -158,7 +158,18 @@ test("a refund is delivered to the merchant's webhook endpoint as refund.succeed
     sent.push(req);
     return { statusCode: 200, body: "" };
   };
-  await runDispatchPass(pool, transport, config);
+  // One pass attempts at most STEP_B_BATCH_LIMIT (100) due rows, and in the
+  // full suite other tests leave more than that pending in the shared
+  // database, so this endpoint's row may not be reached in the first pass.
+  // Keep passing until it has been sent, with a hard cap.
+  const isOurs = (req: WebhookTransportRequest) => {
+    if (req.url !== "https://receiver.example.test/hooks") return false;
+    const body = JSON.parse(req.body) as { type: string; data: Record<string, unknown> };
+    return body.type === "refund.succeeded" && body.data.transactionId === txn;
+  };
+  for (let pass = 0; pass < 20 && !sent.some(isOurs); pass++) {
+    await runDispatchPass(pool, transport, config);
+  }
 
   const refundDeliveries = sent
     .filter((req) => req.url === "https://receiver.example.test/hooks")

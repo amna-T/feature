@@ -420,3 +420,13 @@ Tests: `routes/round4.new.test.ts`, `settlement/run_daily_isolation_test.go`, `s
 The July perf note's "timing difference that resolves at month end" (an AI explanation) was wrong: that 38 % was the M-9 over-count bug.
 
 Tests: `round4.new.test.ts` (cache bound), `archiveReplay.paging.new.test.ts` (2,500 deliveries across pages).
+
+## 11. Round 5: teammate's fixes after #9 / #10
+
+| # | Where | Why → what breaks | Fix |
+|---|---|---|---|
+| 🔴 R5-1 | `auth/loginLimits.ts` | The account limit ignored the client IP and every refused (429) attempt was recorded as a failure, so **anyone who knew an owner's or admin's email could keep them locked out** with one request every few minutes | count failures per account *and* IP; a refused attempt is not recorded |
+| 🔴 R5-3 | `routes/transactions.ts` `/export` | One `SELECT *` built the whole CSV in memory, and from/to were optional, so a request with no dates exported the whole history and could **OOM the 512 MB API**. Invalid dates were a 500. The unused streaming version paged on `occurred_at >` and skipped rows sharing the boundary timestamp. References like `=HYPERLINK(...)` ran as formulas in Excel | stream pages of 1000 keyed on `(occurred_at, id)`; from/to required, at most 93 days; invalid dates 400; cells starting `= + - @` get a leading `'` |
+| 🟡 R5-6 | `routes/refundsFinalize.new.test.ts` | Flaky in the full suite: one `runDispatchPass` attempts at most 100 due rows, and other tests leave more than that pending, so this test's row wasn't always reached | **existing test changed, with the user's approval:** the test now runs up to 20 passes until its own delivery is sent. No assertion was weakened |
+
+Tests: `auth/loginLockoutAbuse.new.test.ts`, `transactions/exportStream.new.test.ts`. Each fails on the old code.
