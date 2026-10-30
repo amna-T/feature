@@ -4,6 +4,25 @@ All notable changes to FilsPay. Dates are deploy dates (Asia/Bahrain).
 Versions are the API image tag; settlement and reporting are versioned with
 it. Format loosely follows Keep a Changelog.
 
+## [Unreleased]
+
+### Added
+- Refunds (FP-212): `POST /v1/refunds` for full and partial refunds, behind
+  `FEATURE_REFUNDS` (off by default; the route answers 501 while it is off).
+- `refund.succeeded` webhook. `data`: `refundId`, `transactionId`,
+  `merchantId`, `amountFils`, `feeReversedFils`, `refundedTotalFils`,
+  `status` (the transaction's status after the refund).
+- Transactions API: `refundedFils` on every transaction.
+- Dashboard: Refund action on the transaction page (owner and finance),
+  shown only while refunds are enabled.
+- Reporting: refunds counted in the merchant daily volume rollup.
+
+### Fixed
+- Transaction status when a capture and a refund interleave: a capture after
+  a partial refund no longer reports `captured`, and a refund racing a
+  capture no longer overwrites the capture's status or logs a full refund
+  for a partial one.
+
 ## [1.9.2] - 2026-09-12
 
 ### Changed

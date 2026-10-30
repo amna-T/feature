@@ -1,24 +1,19 @@
-// YA (Mar): parked until the refunds API exists — FP-212
-// MK: drawer is done, just uncomment + add the route. 30 min job
-// FH: claude review: posts to /v1/refunds but initiateMerchantRefund expects /v1/merchants/:id/refunds,
-// and it makes a new idempotency key per click. check before uncommenting
-// max refund = captured is right, partial refunds are tracked server side — am
-/**
- * Parked, not wired. Updated for FP-212 to call `POST /v1/refunds` with the
- * transaction in the body; the merchant comes from the session server-side.
- * The route is behind FEATURE_REFUNDS and answers 501 while it is off, so
- * this stays imported nowhere until the flag is turned on. Uncomment and
- * render it from TransactionDetailPage in the same change that enables it.
- */
-
-/*
 import { useRef, useState } from "react";
-import { request } from "../../api/client.js";
-import { describeError } from "../../api/client.js";
+import { describeError, request } from "../../api/client.js";
 import { useDashboardAuth } from "../../auth/DashboardAuthContext.js";
 import { RequireRole } from "../../auth/RequireRole.js";
 import { bhd } from "../../format.js";
 import type { TransactionDto } from "../../types.js";
+
+/**
+ * Refund action on the transaction page (FP-212). Calls `POST /v1/refunds`
+ * with the transaction in the body; the merchant comes from the session
+ * server-side.
+ *
+ * Shown only to owner and finance, and only when `me.merchant.refundsEnabled`
+ * (FEATURE_REFUNDS on and no refund hold). Hiding it is a convenience; the
+ * API enforces the role, the flag and the hold itself.
+ */
 
 interface RefundResponse {
   id: string;
@@ -38,6 +33,11 @@ interface RefundDrawerProps {
 
 const REFUNDABLE_STATUSES = new Set(["captured", "partially_captured", "partially_refunded"]);
 
+/** What can still be refunded: captured money not yet returned. */
+export function refundableFils(txn: Pick<TransactionDto, "capturedFils" | "refundedFils">): number {
+  return Math.max(0, txn.capturedFils - txn.refundedFils);
+}
+
 export function RefundDrawer({ txn, onRefunded }: RefundDrawerProps) {
   const { me } = useDashboardAuth();
   const [open, setOpen] = useState(false);
@@ -50,7 +50,10 @@ export function RefundDrawer({ txn, onRefunded }: RefundDrawerProps) {
   // the amount starts a new attempt.
   const idempotencyKey = useRef<string>(crypto.randomUUID());
 
-  const refundable = REFUNDABLE_STATUSES.has(txn.status);
+  const remaining = refundableFils(txn);
+  if (!me?.merchant.refundsEnabled || !REFUNDABLE_STATUSES.has(txn.status) || remaining <= 0) {
+    return null;
+  }
 
   function startNewAttempt(): void {
     idempotencyKey.current = crypto.randomUUID();
@@ -58,20 +61,23 @@ export function RefundDrawer({ txn, onRefunded }: RefundDrawerProps) {
 
   async function handleRefund(event: React.FormEvent): Promise<void> {
     event.preventDefault();
-    if (!me) return;
-    if (!window.confirm("Refund this transaction? The money goes back to the cardholder and cannot be recalled.")) {
+    const trimmed = amount.trim();
+    const amountFils = trimmed === "" ? undefined : Number(trimmed);
+    if (amountFils !== undefined && (!Number.isSafeInteger(amountFils) || amountFils <= 0 || amountFils > remaining)) {
+      setError(`Amount must be a whole number of fils from 1 to ${remaining}.`);
+      return;
+    }
+    const shown = bhd(amountFils ?? remaining);
+    if (!window.confirm(`Refund ${shown}? The money goes back to the cardholder and cannot be recalled.`)) {
       return;
     }
 
     setSubmitting(true);
     setError(null);
     try {
-      const trimmed = amount.trim();
-      // Left blank, amountFils is omitted entirely and the API refunds
-      // everything still refundable — its own documented default, same
-      // affordance the capture form has.
-      const body = trimmed === "" ? { transactionId: txn.id } : { transactionId: txn.id, amountFils: Number(trimmed) };
-
+      // Left blank, amountFils is omitted and the API refunds everything
+      // still refundable.
+      const body = amountFils === undefined ? { transactionId: txn.id } : { transactionId: txn.id, amountFils };
       await request<RefundResponse>("/v1/refunds", {
         method: "POST",
         headers: { "Idempotency-Key": idempotencyKey.current },
@@ -91,8 +97,6 @@ export function RefundDrawer({ txn, onRefunded }: RefundDrawerProps) {
     }
   }
 
-  if (!refundable) return null;
-
   return (
     <RequireRole allow={["owner", "finance"]}>
       <div className="dash-actions">
@@ -105,7 +109,7 @@ export function RefundDrawer({ txn, onRefunded }: RefundDrawerProps) {
                 type="number"
                 min={1}
                 step={1}
-                max={txn.capturedFils}
+                max={remaining}
                 value={amount}
                 onChange={(e) => {
                   setAmount(e.target.value);
@@ -113,7 +117,7 @@ export function RefundDrawer({ txn, onRefunded }: RefundDrawerProps) {
                 }}
               />
             </label>
-            <p className="dash-muted">Captured so far: {bhd(txn.capturedFils)}</p>
+            <p className="dash-muted">Still refundable: {bhd(remaining)}</p>
             <button type="submit" className="dash-button" disabled={submitting}>
               {submitting ? "Refunding..." : "Refund"}
             </button>
@@ -127,6 +131,7 @@ export function RefundDrawer({ txn, onRefunded }: RefundDrawerProps) {
             className="dash-button"
             onClick={() => {
               startNewAttempt();
+              setError(null);
               setOpen(true);
             }}
           >
@@ -137,6 +142,3 @@ export function RefundDrawer({ txn, onRefunded }: RefundDrawerProps) {
     </RequireRole>
   );
 }
-*/
-
-export {};

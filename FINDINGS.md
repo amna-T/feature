@@ -328,7 +328,7 @@ Same format: **where** · **why** · **breaks** · **fix**. All fixed unless mar
 | R2-31 | `v1/` tree | dead code with an unauthenticated capture route; HANDOVER says partners integrate against it, app.ts says it's dead — clarify |
 | R2-32 | `webhooks/archiveReplay.ts` | whole range in one JSON row (also N-10) |
 | R2-33 | `apps/web` SettlementBatchDetailPage | "progress bar" is `gross/10000` %, meaningless |
-| R2-34 | refunds | `refund.succeeded` webhook and reporting rollups still not wired (FP-300 checklist) |
+| R2-34 *(fixed, FP-212 finalisation)* | refunds | `refund.succeeded` webhook and reporting rollups still not wired (FP-300 checklist). Now delivered via `envelope.ts`/`dispatcher.ts`, and counted in `merchant_daily_volume` (migration 0081) by the consumer and the admin rebuild. |
 
 ---
 
@@ -403,7 +403,7 @@ My teammate found these from reading the code. I checked each one against the co
 **Not changed:**
 - **R4-4 (credits never paid out):** waiting on finance.
 - **R4-6 (acquirer key `claimId:attemptCount`):** *contested.* The simulator caches *error* outcomes under the key, so a stable key would make every retry after one error fail forever. The correct key depends on the real acquirer's contract for retries after a 5xx.
-- **R4-8 (status on interleaved refund/capture):** the teammate's own code, so it's theirs to fix.
+- **R4-8 (status on interleaved refund/capture):** fixed in the FP-212 finalisation. Capture derives its status with `nextStatusAfterRefund` (refunded money included), and the refund's journal step re-reads `captured_fils` for the status and event type. Tests: `payments/refundStatusInterleave.new.test.ts`.
 
 **Load note (R4-2):** the close now reads every unbatched capture older than the day (same partial index). On the seed data that is 1.5 ms instead of 0.9 ms per merchant. It runs once a night per merchant, never on a request path.
 

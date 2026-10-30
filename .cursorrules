@@ -64,8 +64,8 @@
 
 # Webhook events
 # WEBHOOK_ELIGIBLE_EVENT_TYPES in dispatcher.ts is intentionally limited.
-# refund.succeeded ships in v1.9. Do not add event types without updating
-# the partner API changelog and the webhook versioning doc.
+# refund.succeeded was added with FP-212. Do not add event types without a
+# mapping in webhooks/envelope.ts and a CHANGELOG entry.
 
 # Database types
 # Monetary columns are INTEGER (not BIGINT). BHD cent amounts fit in int32.

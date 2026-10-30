@@ -59,9 +59,10 @@ silently changing `packages/money` and breaking the settlement reconciliation.
 - The `v1/` prefix in route files is the current live partner API. Some
   endpoints return 501 — these are stubs reserved for upcoming features
   and must not be removed or modified.
-- `refund.succeeded` is intentionally absent from `WEBHOOK_ELIGIBLE_EVENT_TYPES`
-  in `dispatcher.ts` — refund webhooks ship in v1.9 and the event type
-  will be added then. Do not add it prematurely.
+- `WEBHOOK_ELIGIBLE_EVENT_TYPES` in `dispatcher.ts` is the list of event
+  types merchants receive. Adding one needs a mapping in
+  `webhooks/envelope.ts` (the public payload) and a CHANGELOG entry.
+  `refund.succeeded` was added with FP-212.
 
 ### Auth & security
 
