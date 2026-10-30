@@ -6,6 +6,16 @@ it. Format loosely follows Keep a Changelog.
 
 ## [Unreleased]
 
+### Security
+- Login limits on the merchant and admin planes. Over the last 15 minutes:
+  5 failed passwords per account, 50 per client IP, and 5 OTP challenges per
+  user (login and resend together). Over a limit, login answers
+  `429 too_many_attempts` with `Retry-After`, before any password is hashed.
+  Previously guesses were unlimited, and logging in again (or resending)
+  handed out a fresh OTP attempt budget each time. Settings:
+  `LOGIN_WINDOW_MINUTES`, `LOGIN_MAX_FAILURES_PER_ACCOUNT`,
+  `LOGIN_MAX_FAILURES_PER_IP`, `OTP_MAX_CHALLENGES_PER_USER`.
+
 ### Added
 - Refunds (FP-212): `POST /v1/refunds` for full and partial refunds, behind
   `FEATURE_REFUNDS` (off by default; the route answers 501 while it is off).

@@ -12,6 +12,7 @@ import {
 } from "../adminAuth/sessions.js";
 import { withTransaction } from "../db/withTransaction.js";
 import { BadRequestError, GoneError, TooManyRequestsError, UnauthorizedError } from "../lib/errors.js";
+import { adminAccountKey, assertChallengeAllowed, beginLoginAttempt, clearLoginAttempt } from "../auth/loginLimits.js";
 
 /**
  * A pre-computed argon2id hash of a fixed, never-used dummy password, at the
@@ -53,9 +54,16 @@ interface AdminUserRow {
 export async function adminAuthRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: LoginBody }>("/login", async (request, reply) => {
     const { email, password } = request.body ?? {};
-    if (!email || !password) {
+    if (!email || !password || typeof email !== "string" || typeof password !== "string") {
       throw new BadRequestError("invalid_request", "email and password are required");
     }
+
+    // Counted (and refused when over the limit) before any password hashing.
+    const attemptId = await beginLoginAttempt(app.db, reply, app.config, {
+      plane: "admin",
+      accountKey: adminAccountKey(email),
+      ip: request.ip,
+    });
 
     const userResult = await app.db.query<AdminUserRow>(
       `SELECT id, email, role, password_hash FROM admin_users WHERE email = $1 AND status = 'active'`,
@@ -70,8 +78,10 @@ export async function adminAuthRoutes(app: FastifyInstance): Promise<void> {
     if (!user || !passwordOk) {
       throw new UnauthorizedError("invalid_credentials");
     }
+    await clearLoginAttempt(app.db, attemptId);
 
     const { code, expiresAt, rawToken } = await withTransaction(app.db, async (client) => {
+      await assertChallengeAllowed(client, reply, app.config, { plane: "admin", userId: user.id });
       const challenge = await issueAdminChallenge(client, {
         adminUserId: user.id,
         ttlMinutes: app.config.adminOtpTtlMinutes,

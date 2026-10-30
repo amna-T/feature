@@ -121,6 +121,16 @@ export interface Config {
 
   /** FEATURE_REFUNDS (FP-212). Off: POST /v1/refunds keeps answering 501. */
   featureRefunds: boolean;
+
+  /** Login limits, merchant and admin planes (auth/loginLimits.ts). All
+   *  counted over the last `loginWindowMinutes`. */
+  loginWindowMinutes: number;
+  /** Failed password attempts per account before further attempts get 429. */
+  loginMaxFailuresPerAccount: number;
+  /** Failed password attempts per client IP before further attempts get 429. */
+  loginMaxFailuresPerIp: number;
+  /** OTP challenges issued per user (login + resend) before further get 429. */
+  otpMaxChallengesPerUser: number;
 }
 
 function parseNodeEnv(value: string | undefined): Config["nodeEnv"] {
@@ -262,5 +272,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     acquirerCallbackRequireSignature: parseBoolEnv(env.ACQUIRER_CALLBACK_REQUIRE_SIGNATURE, true),
 
     featureRefunds: parseBoolEnv(env.FEATURE_REFUNDS, false),
+
+    loginWindowMinutes: parseIntEnv(env.LOGIN_WINDOW_MINUTES, 15),
+    loginMaxFailuresPerAccount: parseIntEnv(env.LOGIN_MAX_FAILURES_PER_ACCOUNT, 5),
+    loginMaxFailuresPerIp: parseIntEnv(env.LOGIN_MAX_FAILURES_PER_IP, 50),
+    otpMaxChallengesPerUser: parseIntEnv(env.OTP_MAX_CHALLENGES_PER_USER, 5),
   };
 }
