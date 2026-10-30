@@ -200,6 +200,13 @@ async function applyBatchPaid(client: PoolClient, row: OutboxEventRow): Promise<
 }
 
 export async function applyEvent(client: PoolClient, row: OutboxEventRow): Promise<void> {
+  // An event that names no merchant can't be rolled up anywhere. Throwing on
+  // it (a NOT NULL violation) rolled back every pass, so one malformed outbox
+  // row stopped all reporting for good. Skip it loudly and move on.
+  if (typeof row.payload?.merchantId !== "string" && row.event_type !== "settlement.paid") {
+    console.warn(`[reporting/consumer] skipping outbox event ${String(row.id)} (${row.event_type}): no merchantId`);
+    return;
+  }
   switch (row.event_type) {
     case "transaction.captured":
       return applyTransactionCaptured(client, row);
