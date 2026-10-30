@@ -170,22 +170,20 @@ export async function adminAuthRoutes(app: FastifyInstance): Promise<void> {
       if (consumed.rowCount === 0) {
         throw new GoneError("otp_expired");
       }
-      await promoteAdminSession(client, pending.adminSessionId, app.config.adminSessionTtlHours);
+      const promoted = await promoteAdminSession(client, pending.adminSessionId, app.config.adminSessionTtlHours);
       const result = await client.query<{ role: AdminRole }>(
         `SELECT role FROM admin_users WHERE id = $1`,
         [pending.adminUserId],
       );
-      return result.rows[0];
+      return result.rows[0] ? { ...result.rows[0], rawToken: promoted.rawToken } : undefined;
     });
     if (!adminUser) {
       throw new Error("admin otp/verify: admin_users row disappeared mid-transaction");
     }
 
-    // Re-set the cookie so its browser-side lifetime matches the now-promoted
-    // session's full TTL rather than the short pending window.
-    // YA: why is the cookie set twice (login and verify)? Claude says remove one
-    // FH: the second one re-issues at the full session TTL. the merchant flow should do the same
-    reply.setCookie(app.config.adminCookieName, rawToken, {
+    // Re-set the cookie with the promoted session's new token, at the full
+    // session TTL rather than the short pending window.
+    reply.setCookie(app.config.adminCookieName, adminUser.rawToken, {
       httpOnly: true,
       path: "/",
       sameSite: "lax",
