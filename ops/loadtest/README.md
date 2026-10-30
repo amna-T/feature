@@ -1,11 +1,15 @@
 # Checkout capacity
 
-The API handles about **15 checkouts per second** (authorize + capture) with
-the compose defaults (`PG_POOL_MAX=10`) inside its 0.5 vCPU / 512 MB container.
-Past capacity it turns requests away at once with `503 overloaded` and
-`Retry-After: 1` instead of queueing; memory stays under 70 MB.
+The API handles **14 checkouts per second sustained** (authorize + capture,
+p95 under 1 s), with a ceiling of about 15/s, using the compose defaults
+(`PG_POOL_MAX=10`) inside its 0.5 vCPU / 512 MB container. That was measured
+on the hosted box (below); a local run gave the same figure. Past capacity it
+turns requests away at once with `503 overloaded` and `Retry-After: 1`
+instead of queueing; memory stays under 70 MB.
 
-Measured on 30 Oct 2026 with `checkout.js` (k6 0.52) against the compose stack,
+## Local run (developer machine), 30 Oct 2026
+
+Measured with `checkout.js` (k6 0.52) against the compose stack,
 API container limited to `cpus: 0.5`, `mem_limit: 512m`. Each run holds the
 offered rate for 25 s after a 5 s ramp. The acquirer simulator adds 100–400 ms
 per call and fails about 2% of calls (the "errors" column).
@@ -57,17 +61,18 @@ Authorize and capture each hold a database connection for the whole acquirer
 call (~250 ms on average), so checkout throughput is roughly
 `PG_POOL_MAX / 2 calls / 0.3 s`. CPU was not the limit at these rates.
 
-**Caveat:** Postgres was not CPU-limited in this run. On the hosted box every
-container shares 0.5 vCPU, so expect lower figures there; re-run on the box
-before quoting a number. Raise `PG_POOL_MAX` only together with Postgres
-`max_connections` (40 in compose).
+Postgres was not CPU-limited in the local run; the hosted run, with every
+container on the same box, reached the same ceiling. Raise `PG_POOL_MAX` only
+together with Postgres `max_connections` (40 in compose).
 
 ## Running it
 
 ```bash
 # 1. Stack up (see ops/README.md), then a merchant with an API key.
 # 2. From the repo root:
-docker run --rm --network filspay-hosting_default -v "$PWD/ops/loadtest:/scripts" \
+# The network is <compose project>_default; with `-f ops/docker-compose.yml`
+# and no -p flag the project is "ops".
+docker run --rm --network ops_default -v "$PWD/ops/loadtest:/scripts" \
   -e BASE_URL=http://api:3000 -e API_KEY=fp_... -e STEPS=5,10,15,20,30 \
   grafana/k6:0.52.0 run /scripts/checkout.js
 ```

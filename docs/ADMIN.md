@@ -6,9 +6,11 @@ three roles:
 
 | Role | Can do |
 |---|---|
-| **support** | look things up, replay webhooks, view as a merchant, issue small credits |
-| **finance** | everything support can do, plus anything that touches money or settlement |
-| **super_admin** | everything, including making changes while viewing as a merchant |
+| **support** | look things up, replay webhooks, view as a merchant |
+| **finance** | everything support can do, plus anything that touches money or settlement, including credits |
+| **super_admin** | everything |
+
+Viewing as a merchant is read-only for every role, super_admin included.
 
 You'll only see the buttons your role can use. Everything you do here is
 written to the admin audit log.
@@ -45,11 +47,16 @@ manual refunds finance did over email in Q1). Safe to run more than once.
 ## Money
 
 **Issue credit** — goodwill, dispute resolution, or a correction. Tick
-"Also reverse the MDR" if the fee should come back too. Anything over the
-approval limit (50.000 BD, principal only — the MDR reversal isn't counted)
-goes to the credits queue for a second person; smaller credits post
+"Also reverse the MDR" if the fee should come back too. Finance and
+super_admin only. The approval limit is 50.000 BD (principal only — the MDR
+reversal isn't counted), judged on this credit plus the merchant's credits
+posted without a second approver in the last 24 hours. Over it, the credit
+goes to the credits queue for a second person; otherwise it posts
 immediately. Pick the effective date the credit belongs to — for a dispute
-from last month, pick the effective date the credit belongs to.
+from last month, a date in last month. It can't be in the future.
+
+Credits post to the ledger and the merchant's balance, but settlement
+payouts don't include them yet (open with finance, FINDINGS.md R4-4).
 
 **Adjust balance** — when a merchant's balance on screen is wrong and support
 has confirmed the right figure (statement, phone call), enter the difference
@@ -58,27 +65,32 @@ shows the corrected balance straight away; no need to wait for the next
 settlement run.
 
 **Recalculate MDR** — after a merchant's rate changes, run this over the
-date range you want the new rate applied to. Their batches are recalculated
-at the current rate and the difference is posted, so their history and
-reconciliation match what finance agreed with them.
+date range you want the new rate applied to. Closed batches that haven't
+been paid yet are recalculated at the rate in force now (from the fee
+schedule) and the difference is posted; paid batches are left alone. If a
+fee increase is larger than a batch's payout, the payout stops at zero and
+the rest is recovered from later batches.
 
 **Import adjustments** — paste a CSV of corrections with a
 `merchantId,amount,reason` header. Amounts are in BD as finance's sheets
 already have them (`4.75`, `120.00`). Rows are applied as soon as you
 submit; each import's rows are kept with the original text for reference.
-Don't submit the same file twice; there's no duplicate detection yet.
+Submitting rows that were already applied is refused as a duplicate; the
+console offers "Post these rows again anyway" if you really mean it.
 
 ## Settlement ops
 
 **Re-run a daily batch** — pick a business date (and optionally one
 merchant). Days that are already closed or paid are skipped, so re-running
-is always safe.
+is always safe. Today, or any day that hasn't ended in Bahrain yet, is
+refused.
 
 **Rebuild cached balances** — refreshes every merchant's cached balance.
 Run it whenever a balance looks off or after any manual correction.
 It only rewrites the balance cache, never the ledger, so it's safe to run
 as often as you like; it asks for confirmation because it covers every
-merchant at once. The nightly recompute does the same thing at 02:00.
+merchant at once. It recomputes each balance from the ledger, the same
+way as `settlement rebuild-balances`. There is no nightly run.
 
 **Rebuild analytics** — dashboards lag a little behind live activity by
 design. If they look stale, rebuild them from scratch here instead of
@@ -90,15 +102,17 @@ waiting for the worker. Quick, safe, and repeatable.
 
 **Replay a batch** — pick an endpoint, a date range, and which delivery
 statuses to resend (default: `exhausted`; any status can be chosen). Each
-delivery is re-signed and queued; the merchant's receiver sees them as new
-deliveries.
+delivery is re-signed with a fresh timestamp and queued. It keeps its
+original `Webhook-Delivery-Id`, so a receiver that dedupes on it will skip
+deliveries it has already processed.
 
 **Archive / restore** — before a merchant rotates their webhook URL,
 archive the endpoint's history; after they register the new one, restore
 the archive against it to backfill. No screen for this yet — it's
 `POST /v1/admin/merchants/:id/webhook-endpoints/:endpointId/archive` and
-`.../archive/:archiveId/replay`. Archives are written in pages of 1000
-deliveries, so any range is fine.
+`.../archive/:archiveId/replay`. The database builds the archive, and
+restoring reads it back 1,000 deliveries at a time, so large ranges are
+fine.
 
 ## Incident review: duplicate `settlement.paid` (2026-08-21)
 

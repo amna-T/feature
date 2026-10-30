@@ -14,8 +14,10 @@ in-flight batch transaction commits or rolls back cleanly.
 
 ## Quick start
 
-Run from the repo root. api and settlement refuse to start without two
-secrets; export them first (or put them in `ops/.env`):
+Run from the repo root. Compose refuses to start without three secrets
+(`POSTGRES_PASSWORD`, `SETTLEMENT_INTERNAL_TOKEN`,
+`WEBHOOK_SECRET_ENCRYPTION_KEY`); export them first (or put them in
+`ops/.env`):
 
 ```
 cp ops/.env.docker.example ops/.env.docker   # gitignored; then set its secret:
@@ -82,9 +84,10 @@ run with `npm run dev` inside each package.
 | Logging | `LOG_LEVEL=warn`: per-request info logs cost real CPU on 0.5 vCPU |
 | Start-up | The API and reporting run prebuilt JavaScript (`node dist/...`), not `npx tsx` |
 
-Capacity measured with these settings: about 15 checkouts per second with
-`PG_POOL_MAX=10`. See `loadtest/README.md`, including the caveat about CPU on
-the hosted box.
+Capacity measured with these settings on the hosted box: 14 checkouts per
+second sustained with p95 under 1 s, ceiling about 15/s, with
+`PG_POOL_MAX=10`. The database pool is the limit, not CPU or memory. See
+`loadtest/README.md`.
 
 ## Database
 
@@ -106,9 +109,10 @@ The settlement worker can be given a second connection string,
 
 | Service | Needs | Where it comes from in compose |
 |---|---|---|
-| api | `DATABASE_URL`, `SETTLEMENT_INTERNAL_URL`, `TRUST_PROXY`, `LOG_LEVEL`, `PG_POOL_MAX` | `environment:` |
+| postgres, and every service's `DATABASE_URL` | `POSTGRES_PASSWORD` | shell or `ops/.env` (required) |
+| api | `DATABASE_URL`, `SETTLEMENT_INTERNAL_URL`, `TRUST_PROXY`, `LOG_LEVEL`, `PG_POOL_MAX`, `CHECKOUT_BASE_URL` | `environment:` |
 | api | `WEBHOOK_SECRET_ENCRYPTION_KEY`, `SETTLEMENT_INTERNAL_TOKEN` | shell (required) |
-| api | `ACQUIRER_CALLBACK_SIGNING_SECRET`, `NODE_ENV` | `.env.docker` |
+| api | `ACQUIRER_CALLBACK_SIGNING_SECRET`, `NODE_ENV`; optionally `FEATURE_REFUNDS`, `OTP_DEV_EXPOSE` | `.env.docker` |
 | settlement | `DATABASE_URL` | `environment:` |
 | settlement | `SETTLEMENT_INTERNAL_TOKEN` | shell (required) |
 | reporting | `DATABASE_URL` | `environment:`; runs `worker` by default |
