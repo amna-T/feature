@@ -1,7 +1,7 @@
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from "fastify";
 import { toFils } from "@filspay/money";
 import { requireApiKey } from "../apiKeys/verify.js";
-import { requireMerchantAuth, requireMerchantWriterActor } from "../auth/requireMerchantAuth.js";
+import { requireMerchantAuth, requireMerchantRole, requireMerchantWriterActor } from "../auth/requireMerchantAuth.js";
 import { authorizeTransaction, type AuthorizeInput } from "../payments/authorize.js";
 import { captureTransaction } from "../payments/capture.js";
 import { applyCaptureDiscountAdjustment } from "../payments/discountAdjustment.js";
@@ -9,7 +9,7 @@ import { voidTransaction } from "../payments/void.js";
 import { buildTransactionsExportCsv } from "../transactions/exportCsv.js";
 import { getTransactionById, listTransactions } from "../transactions/query.js";
 import { listTransactionEvents } from "../transactions/events.js";
-import { BadRequestError, NotFoundError } from "../lib/errors.js";
+import { BadRequestError, ForbiddenError, NotFoundError } from "../lib/errors.js";
 import type { SimulatedCardInput } from "../acquirer/types.js";
 
 interface AuthorizeBody {
@@ -41,6 +41,19 @@ interface ListTransactionsQuery {
   limit?: string;
   cursor?: string;
 }
+
+/**
+ * Capture and void move money. Only owner/finance sessions and API keys may
+ * call them; the support role and admin impersonation (view-only, and
+ * recorded as a merchant_session write) may not. Both used to accept any
+ * authenticated merchant actor.
+ */
+const rejectImpersonation: preHandlerHookHandler = async (request) => {
+  if (request.merchantAuth?.actorType === "admin_impersonation") {
+    throw new ForbiddenError("impersonation_read_only");
+  }
+};
+const MONEY_MOVING_PREHANDLERS = [requireMerchantAuth, rejectImpersonation, requireMerchantRole("owner", "finance")];
 
 /**
  * Reads the Idempotency-Key header. Required on authorize and capture;
@@ -88,11 +101,8 @@ export async function transactionRoutes(app: FastifyInstance): Promise<void> {
   );
 
   app.post<{ Params: TransactionIdParams; Body: CaptureBody }>(
-    // am: requireMerchantAuth lets impersonation through here too? an admin impersonating can capture
-    // MK: impersonation is read-only, enforced in requireMerchantAuth. fine
-    // MK: confirmed — ADMIN.md says grants are support-level read only
     "/:id/capture",
-    { preHandler: requireMerchantAuth },
+    { preHandler: MONEY_MOVING_PREHANDLERS },
     async (request, reply) => {
       const idempotencyKey = getIdempotencyKey(request);
       const { amountFils } = request.body ?? {};
@@ -120,7 +130,7 @@ export async function transactionRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Params: TransactionIdParams }>(
     // TODO(FH): role check? finance role users shouldn't void. ask MK
     "/:id/void",
-    { preHandler: requireMerchantAuth },
+    { preHandler: MONEY_MOVING_PREHANDLERS },
     async (request, reply) => {
       const result = await voidTransaction(app.db, {
         transactionId: request.params.id,
