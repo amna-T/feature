@@ -38,6 +38,10 @@ it. Format loosely follows Keep a Changelog.
   email/SMS delivery for login codes.
 - Capacity measured on the hosted box: 14 checkouts/s sustained, ceiling
   about 15/s (`ops/loadtest/README.md`).
+- Fixed load scenario (`ops/loadtest/scenario.js`): shoppers paying every
+  30 s plus merchants watching their transaction list, with pass criteria as
+  k6 thresholds. Locally the stack serves 300 simulated users; past that the
+  API's 0.5 vCPU is the limit.
 - `docs/ai-setup/`: the team's AI configuration (permission rules, custom
   commands, MCP config), proposed for a human to install.
 

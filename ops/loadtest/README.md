@@ -1,11 +1,79 @@
 # Checkout capacity
 
+**Fixed scenario: 300 simulated users** (270 shoppers paying every 30 s plus
+30 merchants refreshing their transaction list every 10 s) within the pass
+criteria below. At 325 users checkout p95 reaches 1.01 s, just over the 1 s
+limit. Definition, method and results are under "Fixed scenario".
+
 The API handles **14 checkouts per second sustained** (authorize + capture,
 p95 under 1 s), with a ceiling of about 15/s, using the compose defaults
 (`PG_POOL_MAX=10`) inside its 0.5 vCPU / 512 MB container. That was measured
 on the hosted box (below); a local run gave the same figure. Past capacity it
 turns requests away at once with `503 overloaded` and `Retry-After: 1`
 instead of queueing; memory stays under 70 MB.
+
+## Fixed scenario (`scenario.js`)
+
+`checkout.js` measures throughput (checkouts per second). `scenario.js`
+answers a different question, "how many users", with a workload that stays the
+same between runs; only `USERS` changes.
+
+| | |
+|---|---|
+| Users | `USERS` simulated users: 1 in 10 is a merchant, the rest are shoppers |
+| Shopper | authorize 4.750 BD, capture it, then wait; one checkout every 30 s |
+| Merchant | `GET /v1/transactions?limit=50` (dashboard open), every 10 s |
+| Load per 100 users | 3 checkouts/s (6 acquirer calls) + 1 list request/s |
+| Timing | 1 min ramp, then 3 min hold (`HOLD`); only the hold is judged |
+| Start | each user starts at a random point in its first cycle, so they don't fire together |
+
+**Pass criteria** (k6 thresholds; the run exits non-zero on a fail):
+
+| Metric (hold phase) | Limit |
+|---|---|
+| Checkout p95 (authorize + capture) | < 1 s |
+| Checkouts turned away (`503 overloaded`) | < 1% |
+| Other checkout failures | < 6% (the simulator fails ~2% of acquirer calls on purpose, so ~4% is the floor) |
+| Transaction list p95 | < 500 ms |
+
+The capacity figure is the largest `USERS` that passes.
+
+### Results, 30 Oct 2026 (local, compose defaults)
+
+API container `cpus: 0.5`, `mem_limit: 512m`, `PG_POOL_MAX=10`; main at
+`cbec7aa`; freshly seeded database; k6 0.52 inside the compose network.
+
+| Users | Checkouts/s (hold) | Checkout p50 / p95 | Turned away | Other failures | List p95 | Result |
+|---|---|---|---|---|---|---|
+| 300 | 9.0 | 566 ms / 872 ms | 0% | 4.2% | 101 ms | **pass** |
+| 325 | 9.7 | 634 ms / 1.01 s | 0.05% | 3.9% | 156 ms | fail (p95) |
+| 350 | 10.5 | 623 ms / 1.39 s | 1.3% | 4.2% | 310 ms | fail (p95, shed) |
+| 375 | 11.2 | 687 ms / 1.51 s | 1.0% | 3.6% | 328 ms | fail (p95, shed) |
+| 400 | 12.0 | 683 ms / 1.79 s | 3.1% | 3.6% | 483 ms | fail (p95, shed) |
+| 375, `PG_POOL_MAX=20` | 11.2 | 658 ms / 1.38 s | 0% | 4.5% | 227 ms | fail (p95) |
+
+Checkouts/s is the offered rate (shoppers / 30 s). API memory peaked at
+69 MB; no restarts or OOM kills.
+
+**What limits it here: API CPU.** The API container sat at its 0.5 vCPU cap
+(~50% of one core in `docker stats`) from 300 users up. Doubling the
+database pool removed the 503s but barely moved p95 (1.51 s to 1.38 s), so
+past ~300 users the requests queue for CPU; the pool size only decides when
+shedding starts. This differs from the `checkout.js` result below, which had
+no merchant list traffic and evenly spaced arrivals. The median (~0.55 s) is
+mostly the acquirer simulator (100–400 ms per call, two calls per checkout).
+
+To repeat it (stack up and seeded as in `ops/README.md`; use a key printed
+by the **last** round of `seed` output, because the seed regenerates once and
+earlier keys are gone):
+
+```bash
+docker run --rm --network ops_default -v "$PWD/ops/loadtest:/scripts" \
+  -e BASE_URL=http://api:3000 -e API_KEY=fp_test_... -e USERS=300 \
+  grafana/k6:0.52.0 run /scripts/scenario.js
+```
+
+Not yet run on the hosted box.
 
 ## Local run (developer machine), 30 Oct 2026
 
