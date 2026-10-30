@@ -32,6 +32,22 @@ export function errorHandler(
     return;
   }
 
+  // Fastify's own request errors (a body that isn't valid JSON, an
+  // unsupported content type, …) already carry a 4xx status. It was
+  // ignored, so every POST/PATCH route answered malformed JSON with a 500.
+  if (typeof fastifyErr.statusCode === "number" && fastifyErr.statusCode >= 400 && fastifyErr.statusCode < 500) {
+    reply.code(fastifyErr.statusCode).send({ error: "invalid_request", message: fastifyErr.message });
+    return;
+  }
+
+  // Postgres couldn't parse a value the request supplied (a malformed id in
+  // the URL, e.g. /v1/transactions/abc, or a date like 2026-13-45): bad
+  // input, not a server fault. It used to be a 500.
+  if (["22P02", "22007", "22008"].includes((err as { code?: string }).code ?? "")) {
+    reply.code(400).send({ error: "invalid_request", message: "a value in the request is malformed" });
+    return;
+  }
+
   // Every pooled connection stayed busy past PG_POOL_CONNECTION_TIMEOUT_MS:
   // that is overload, not a bug, so answer like load shedding does.
   if (isPoolExhausted(err)) {

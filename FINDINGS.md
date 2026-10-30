@@ -454,3 +454,18 @@ Tests: `auth/loginLockoutAbuse.new.test.ts`, `transactions/exportStream.new.test
 **Still a decision, not a code change:** R4-4 (credits and journaled adjustments never reach a payout: finance) and R4-6 (acquirer retry key: needs the real acquirer's contract).
 
 Tests: `routes/sectionC.new.test.ts`, `webhooks/fanout.new.test.ts`, `settlement/split_payout_test.go`, `apps/web/src/ui.new.test.ts`. Every bug test fails on the old code (the export one hangs); the fan-out test guards the new cursor against losing late-committing events. No existing test file changed.
+
+## 13. Final sweep: bad input and the public checkout
+
+Method: besides reading the code, every one of the API's 79 routes was fuzzed as a signed-in merchant owner (session and API key) and a super_admin, with malformed ids, garbage query values, wrong-typed bodies and invalid JSON. Before the fixes, 44 route/input combinations answered **500**; after them, none do (the only 5xx left is `/readyz` correctly reporting "not ready" without the settlement service).
+
+| # | Where | Why → what breaks | Fix |
+|---|---|---|---|
+| 🔴 F-1 | `POST /v1/payment-links/:token/pay` | Nothing validated the card. `{"card": {}}` crashed inside the acquirer call **after the link was reserved and before the release**, so the link stayed `reserved`: real customers got "payment_link_processing" until the reservation timed out. Link URLs are public, so anyone could keep any merchant's checkout unpayable with one request at a time. Expiry was never checked, so expired cards were charged | `payments/card.ts` validates number (12–19 digits, spaces allowed), month, year, **expiry**, CVV before anything is reserved (400 `invalid_card` / `card_expired`); `pay.ts` also releases the reservation if authorize throws for any reason |
+| 🟠 F-2 | `POST /v1/transactions`, `/:id/capture` | A negative, fractional, text, zero or huge `amountFils` went straight into `toFils` → **500** | positive whole number of fils, else 400 `invalid_amount` (as refunds already did) |
+| 🟠 F-3 | `plugins/errorHandler.ts` | Fastify marks a non-JSON body as 400, but the handler ignored the status, so **every POST/PATCH route** answered malformed JSON with a 500 | Fastify's own 4xx statuses are passed through |
+| 🟠 F-4 | `plugins/errorHandler.ts`, `settlement/query.ts` | A malformed id in the URL (`/v1/transactions/abc`) or an invalid date (`from=2026-13-45`, `garbage`) reached Postgres or a `RangeError` → **500** on transactions, settlement batches, reconciliation and summary | Postgres "can't parse this value" errors (22P02, 22007, 22008) → 400; the settlement date helper throws 400 `invalid_date` |
+| — | `transactions/lookup.ts`, `transactions/receipt.ts` | look up a transaction by id with no merchant scoping | not exposed: nothing calls them (dead code) |
+| — | reporting listener, webhook dispatcher | the LISTEN connection never reconnects after a Postgres restart | not data loss: both have poll safety nets (15 s / 5 s) |
+
+Tests: `routes/finalSweep.new.test.ts` (4 cases, all failing on the old code). No existing test file changed.

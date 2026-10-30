@@ -6,6 +6,13 @@ it. Format loosely follows Keep a Changelog.
 
 ## [Unreleased]
 
+### Final sweep (FINDINGS.md §13)
+- Checkout: card details are validated (including expiry) before the link is
+  reserved; a malformed card can no longer leave a payment link stuck
+  'reserved', and an expired card is refused.
+- Bad input is a 400, never a 500: invalid amounts on authorize/capture,
+  malformed JSON bodies on every route, malformed ids and invalid dates.
+
 ### Audit round 6 (FINDINGS.md §12)
 - Transactions CSV export: the page cursor lost microseconds, repeating rows
   at page boundaries and looping forever when a page's worth of rows shared
