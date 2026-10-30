@@ -74,8 +74,13 @@ export async function authorizeTransaction(
     }
     // 'fresh' / 'retry_after_failure' — continue.
 
-    const merchantResult = await client.query<{ onboarding_status: string; status: string; mdr_bps: number }>(
-      `SELECT onboarding_status, status, mdr_bps FROM merchants WHERE id = $1`,
+    const merchantResult = await client.query<{
+      onboarding_status: string;
+      status: string;
+      mdr_bps: number;
+      test_mode: boolean;
+    }>(
+      `SELECT onboarding_status, status, mdr_bps, test_mode FROM merchants WHERE id = $1`,
       [input.merchantId],
     );
     const merchant = merchantResult.rows[0];
@@ -102,10 +107,12 @@ export async function authorizeTransaction(
 
     if (acquirerResult.outcome === "approved") {
       const insertResult = await client.query<TransactionRow>(
-        `INSERT INTO transactions (merchant_id, status, amount_fils, captured_fils, acquirer_reference, reference)
-         VALUES ($1, 'authorized', $2, 0, $3, $4)
+        // test_mode is recorded per sale: settlement carries older unbatched
+        // captures forward and must know which were sandbox sales (0079).
+        `INSERT INTO transactions (merchant_id, status, amount_fils, captured_fils, acquirer_reference, reference, test_mode)
+         VALUES ($1, 'authorized', $2, 0, $3, $4, $5)
          RETURNING *`,
-        [input.merchantId, input.amountFils, acquirerResult.acquirerReference, input.reference ?? null],
+        [input.merchantId, input.amountFils, acquirerResult.acquirerReference, input.reference ?? null, merchant.test_mode],
       );
       const txnRow = insertResult.rows[0];
       if (!txnRow) {

@@ -12,6 +12,8 @@ export interface ArchivedDeliveryEntry {
   createdAt: string;
 }
 
+const ARCHIVE_PAGE_SIZE = 1000;
+
 export interface CreateArchiveResult {
   archiveId: string;
   deliveryCount: number;
@@ -38,53 +40,37 @@ export async function createWebhookDeliveryArchive(
       throw new NotFoundError("webhook_endpoint_not_found");
     }
 
-    const rows = await client.query<{
-      id: string;
-      outbox_event_id: string;
-      event_type: string;
-      payload: Record<string, unknown>;
-      created_at: Date;
-    }>(
-      `SELECT id, outbox_event_id, event_type, payload, created_at
-         FROM webhook_deliveries
-        WHERE endpoint_id = $1 AND created_at >= $2 AND created_at < $3
-        ORDER BY created_at ASC`,
-      [input.endpointId, input.from, input.to],
-    );
-
-    const entries: ArchivedDeliveryEntry[] = rows.rows.map((r) => ({
-      deliveryId: r.id,
-      outboxEventId: r.outbox_event_id,
-      eventType: r.event_type,
-      payload: r.payload,
-      createdAt: r.created_at.toISOString(),
-    }));
-
-    const inserted = await client.query<{ id: string }>(
+    // The JSON document is assembled by Postgres in one INSERT ... SELECT,
+    // so the API (512 MB budget) never holds the range in memory; building
+    // it in Node took a whole year's deliveries plus their JSON string at
+    // once and could take the process down. Same format as before.
+    const inserted = await client.query<{ id: string; delivery_count: number }>(
       `INSERT INTO webhook_delivery_archives
           (endpoint_id, merchant_id, created_by_admin_user_id, from_created_at, to_created_at, delivery_count, archive_payload)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id`,
-      [
-        input.endpointId,
-        input.merchantId,
-        input.adminUserId,
-        input.from,
-        input.to,
-        entries.length,
-        JSON.stringify(entries),
-      ],
+       SELECT $1, $2, $3, $4, $5, count(*),
+              COALESCE(json_agg(json_build_object(
+                'deliveryId', d.id,
+                'outboxEventId', d.outbox_event_id,
+                'eventType', d.event_type,
+                'payload', d.payload,
+                'createdAt', to_char(d.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+              ) ORDER BY d.created_at ASC), '[]')::text
+         FROM webhook_deliveries d
+        WHERE d.endpoint_id = $1 AND d.created_at >= $4 AND d.created_at < $5
+       RETURNING id, delivery_count`,
+      [input.endpointId, input.merchantId, input.adminUserId, input.from, input.to],
     );
+    const deliveryCount = inserted.rows[0]!.delivery_count;
 
     await insertAdminAuditLog(client, {
       adminUserId: input.adminUserId,
       action: "webhook_delivery_archive_create",
       targetType: "webhook_endpoint",
       targetId: input.endpointId,
-      metadata: { merchantId: input.merchantId, deliveryCount: entries.length },
+      metadata: { merchantId: input.merchantId, deliveryCount },
     });
 
-    return { archiveId: inserted.rows[0]!.id, deliveryCount: entries.length };
+    return { archiveId: inserted.rows[0]!.id, deliveryCount };
   });
 }
 
@@ -117,12 +103,11 @@ export async function replayWebhookDeliveryArchive(
   input: { merchantId: string; archiveId: string; targetEndpointId: string; adminUserId: string },
 ): Promise<{ replayedCount: number }> {
   return withTransaction(pool, async (client) => {
-    const archiveResult = await client.query<{ archive_payload: string }>(
-      `SELECT archive_payload FROM webhook_delivery_archives WHERE id = $1 AND merchant_id = $2`,
+    const archiveResult = await client.query<{ id: string }>(
+      `SELECT id FROM webhook_delivery_archives WHERE id = $1 AND merchant_id = $2`,
       [input.archiveId, input.merchantId],
     );
-    const archiveRow = archiveResult.rows[0];
-    if (!archiveRow) {
+    if (!archiveResult.rows[0]) {
       throw new NotFoundError("webhook_delivery_archive_not_found");
     }
 
@@ -138,19 +123,34 @@ export async function replayWebhookDeliveryArchive(
       throw new ConflictError("endpoint_disabled");
     }
 
-    const entries = JSON.parse(archiveRow.archive_payload) as ArchivedDeliveryEntry[];
-
+    // Read the archive in pages through a cursor (ADMIN.md: "pages of
+    // 1000") instead of loading and JSON.parse-ing the whole document.
+    await client.query(
+      `DECLARE archive_entries NO SCROLL CURSOR FOR
+         SELECT e.value AS entry
+           FROM webhook_delivery_archives a, json_array_elements(a.archive_payload::json) WITH ORDINALITY AS e(value, n)
+          WHERE a.id = $1
+          ORDER BY e.n`,
+      [input.archiveId],
+    );
     let replayedCount = 0;
-    for (const entry of entries) {
-      await insertReplayDeliveryRow(client, {
-        id: entry.deliveryId,
-        endpointId: input.targetEndpointId,
-        outboxEventId: entry.outboxEventId,
-        eventType: entry.eventType,
-        payload: entry.payload,
-      });
-      replayedCount++;
+    for (;;) {
+      const page = await client.query<{ entry: ArchivedDeliveryEntry }>(
+        `FETCH ${ARCHIVE_PAGE_SIZE} FROM archive_entries`,
+      );
+      for (const { entry } of page.rows) {
+        await insertReplayDeliveryRow(client, {
+          id: entry.deliveryId,
+          endpointId: input.targetEndpointId,
+          outboxEventId: entry.outboxEventId,
+          eventType: entry.eventType,
+          payload: entry.payload,
+        });
+        replayedCount++;
+      }
+      if (page.rows.length < ARCHIVE_PAGE_SIZE) break;
     }
+    await client.query(`CLOSE archive_entries`);
 
     await insertAdminAuditLog(client, {
       adminUserId: input.adminUserId,

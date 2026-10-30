@@ -384,3 +384,39 @@ Same format: **where** · **why** · **breaks** · **fix**. All fixed unless mar
 - Updated test files: `adjustmentImport.test.ts`, `adminAdjustmentImport.test.ts`, `currentFeeScheduleDisplay.test.ts`, `acquirerCallbacks.test.ts`.
 - New test files: `auth/sessions.pending.test.ts`, `money/allocate_test.go`, `settlement/money_precision_test.go`.
 - Round 2: `routes/refunds.fixes.new.test.ts`, `settlement/batch_refund_test.go`, `routes/round2.new.test.ts`. The full `npm test` is now green (390 API, 11 reporting, 52 others): the refund tests pass, the backoff test is deterministic, and the 4 reporting failures were the poison-pill bug R2-35.
+
+---
+
+## 10. Round 4: teammate's code review of main (c4a53bf)
+
+My teammate found these from reading the code. I checked each one against the code before changing anything.
+
+| # | Where | Why → what breaks | Fix |
+|---|---|---|---|
+| 🔴 R4-1 | `webhooks/create.ts` | The internal-host check compared names literally, but a URL keeps a trailing dot. `settlement.`, `localhost.` and `x.internal.` resolve to the same internal host. **This re-opened the R2-4 SSRF**, and "send test event" returns the response body. | strip trailing dots before the check |
+| 🔴 R4-2 | `batch.go` CloseBatch | Only the close's own business day was taken. A merchant suspended between a capture and that night's close was skipped, so **that day's sales were never paid**, even after reactivation, while its refunds carried forward and were deducted. | carry earlier unbatched captures forward, but only sales recorded as live: `transactions.test_mode` is set at authorize (0079). NULL (from before 0079) is never carried, and test-mode sales are never batched |
+| 🟠 R4-3 | `paymentLinks/pay.ts` | A failed capture released the link but left the authorization open, so the cardholder's hold stayed until expiry and every retry added another | void it, as the reservation-lost branch already did |
+| 🟠 R4-5 | `batch.go` RunDailyBatch | One merchant's error returned at once, so **every merchant after it went unpaid**. The daemon retries each tick, so a persistent error blocked them indefinitely | log, continue, and return all errors joined. The daemon still enqueues payout notifications |
+| 🟠 R4-9 | `recalculate_mdr.go` | A fee increase bigger than a refund-reduced payout stored a **negative `net_payout_fils`**. PayoutBatch pays nothing for it and the shortfall was never collected | stop at 0 and record `settlement_shortfalls`. Later closes recover it, partially if they have to. CHECK `net_payout_fils >= 0` NOT VALID. Existing negatives are backfilled |
+| 🟡 R4-7 | `creditRequestValidation.ts` | Future effective dates were accepted, although the doc comment says they are rejected, so ledger rows could be dated in the future | reject dates after today's Bahrain date |
+
+**Not changed:**
+- **R4-4 (credits never paid out):** waiting on finance.
+- **R4-6 (acquirer key `claimId:attemptCount`):** *contested.* The simulator caches *error* outcomes under the key, so a stable key would make every retry after one error fail forever. The correct key depends on the real acquirer's contract for retries after a 5xx.
+- **R4-8 (status on interleaved refund/capture):** the teammate's own code, so it's theirs to fix.
+
+**Load note (R4-2):** the close now reads every unbatched capture older than the day (same partial index). On the seed data that is 1.5 ms instead of 0.9 ms per merchant. It runs once a night per merchant, never on a request path.
+
+Tests: `routes/round4.new.test.ts`, `settlement/run_daily_isolation_test.go`, `settlement/carry_forward_test.go`. Each fails on the old code.
+
+### Load (judging: "holding up under load", 0.5 vCPU / 512 MB)
+
+| # | Where | Why → what breaks | Fix |
+|---|---|---|---|
+| 🟠 L-1 | `acquirer/simulator.ts` | The three idempotency maps gained a key for every authorize, capture and refund and were never cleared ("cleared on restart"), so under sustained traffic the API's heap grows until the 512 MB limit | keep the newest 10,000 keys per operation; retries come within seconds |
+| 🟠 L-2 | `webhooks/archiveReplay.ts` | Create loaded the whole range and built one JSON string in Node; replay `JSON.parse`d all of it. A year of deliveries can OOM the API (N-10, R2-32). ADMIN.md says "pages of 1000" | Postgres builds the same JSON document (`json_agg` in one INSERT … SELECT); replay streams it through a cursor 1000 entries at a time. Format unchanged, so existing tests pass |
+| 🟡 L-3 | migration `0080` | The settlement summary read every `transaction_events` row (3.4 s for Delta, July perf note), and the cost grows with all history | partial index on capture events by `occurred_at`. 480k events, single worker: 160 ms → 67 ms |
+
+The July perf note's "timing difference that resolves at month end" (an AI explanation) was wrong: that 38 % was the M-9 over-count bug.
+
+Tests: `round4.new.test.ts` (cache bound), `archiveReplay.paging.new.test.ts` (2,500 deliveries across pages).
